@@ -13,7 +13,8 @@ pub enum CaptureMessage {
 }
 
 pub fn capture_before_ui() -> AppResult<CapturedImage> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .map_err(SnaptureError::from)?;

@@ -30,7 +30,7 @@ pub fn show(
             output.capture_clicked = true;
         }
 
-        if ui.button("Save PNG").clicked() {
+        if ui.button("Save PNG...").clicked() {
             output.save_clicked = true;
         }
 

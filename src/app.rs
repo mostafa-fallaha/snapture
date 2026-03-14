@@ -227,8 +227,23 @@ impl SnaptureApp {
     }
 
     fn save_document(&mut self) {
-        match save::save_document_png(&self.document, PathBuf::from(&self.save_path)) {
-            Ok(path) => self.set_status(format!("Saved {}", path.display())),
+        let path = match save::choose_save_path(PathBuf::from(&self.save_path)) {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.set_status("Save cancelled.");
+                return;
+            }
+            Err(error) => {
+                self.set_status(format!("Save dialog failed: {error}"));
+                return;
+            }
+        };
+
+        match save::save_document_png(&self.document, &path) {
+            Ok(path) => {
+                self.save_path = path.display().to_string();
+                self.set_status(format!("Saved {}", path.display()));
+            }
             Err(error) => self.set_status(format!("Save failed: {error}")),
         }
     }
