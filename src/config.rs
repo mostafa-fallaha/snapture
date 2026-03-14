@@ -44,6 +44,6 @@ impl AppConfig {
             .map(|duration| duration.as_secs())
             .unwrap_or(0);
 
-        base_dir.join(format!("snapture-{timestamp}.png"))
+        base_dir.join(format!("Snapture/snapture-{timestamp}.png"))
     }
 }
