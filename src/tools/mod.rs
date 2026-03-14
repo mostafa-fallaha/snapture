@@ -1,0 +1,89 @@
+pub mod arrow;
+pub mod crop;
+pub mod pen;
+pub mod rect;
+pub mod text;
+
+use crate::{
+    model::{
+        overlay::{CropOverlay, OverlayObject},
+        types::{ImagePoint, StrokeStyle},
+    },
+    tools::{arrow::ArrowDraft, crop::CropDraft, pen::PenDraft, rect::RectangleDraft},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolKind {
+    Pen,
+    Rectangle,
+    Arrow,
+    Text,
+    Crop,
+}
+
+impl ToolKind {
+    pub const ALL: [Self; 5] = [
+        Self::Pen,
+        Self::Rectangle,
+        Self::Arrow,
+        Self::Text,
+        Self::Crop,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pen => "Pen",
+            Self::Rectangle => "Rect",
+            Self::Arrow => "Arrow",
+            Self::Text => "Text",
+            Self::Crop => "Crop",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum DraftOverlay {
+    Pen(PenDraft),
+    Rectangle(RectangleDraft),
+    Arrow(ArrowDraft),
+    Crop(CropDraft),
+}
+
+impl DraftOverlay {
+    pub fn update(&mut self, point: ImagePoint) {
+        match self {
+            Self::Pen(draft) => draft.push(point),
+            Self::Rectangle(draft) => draft.update(point),
+            Self::Arrow(draft) => draft.update(point),
+            Self::Crop(draft) => draft.update(point),
+        }
+    }
+
+    pub fn preview(&self) -> OverlayObject {
+        match self {
+            Self::Pen(draft) => draft.preview(),
+            Self::Rectangle(draft) => draft.preview(),
+            Self::Arrow(draft) => draft.preview(),
+            Self::Crop(draft) => OverlayObject::Crop(CropOverlay { rect: draft.rect() }),
+        }
+    }
+
+    pub fn finish(self) -> Option<OverlayObject> {
+        match self {
+            Self::Pen(draft) => draft.finish(),
+            Self::Rectangle(draft) => draft.finish(),
+            Self::Arrow(draft) => draft.finish(),
+            Self::Crop(draft) => Some(OverlayObject::Crop(CropOverlay { rect: draft.rect() })),
+        }
+    }
+}
+
+pub fn begin_drag(tool: ToolKind, start: ImagePoint, style: StrokeStyle) -> Option<DraftOverlay> {
+    match tool {
+        ToolKind::Pen => Some(DraftOverlay::Pen(PenDraft::new(start, style))),
+        ToolKind::Rectangle => Some(DraftOverlay::Rectangle(RectangleDraft::new(start, style))),
+        ToolKind::Arrow => Some(DraftOverlay::Arrow(ArrowDraft::new(start, style))),
+        ToolKind::Crop => Some(DraftOverlay::Crop(CropDraft::new(start))),
+        ToolKind::Text => None,
+    }
+}

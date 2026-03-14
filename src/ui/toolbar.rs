@@ -1,0 +1,102 @@
+use eframe::egui::{self, Color32, color_picker};
+
+use crate::{model::types::RgbaColor, tools::ToolKind};
+
+#[derive(Default)]
+pub struct ToolbarOutput {
+    pub tool_change: Option<ToolKind>,
+    pub commit_crop: bool,
+    pub cancel_crop: bool,
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    active_tool: ToolKind,
+    color: &mut RgbaColor,
+    stroke_thickness: &mut f32,
+    text_size: &mut f32,
+    text_buffer: &mut String,
+    save_path: &mut String,
+    zoom: &mut f32,
+    min_zoom: f32,
+    max_zoom: f32,
+    has_pending_crop: bool,
+    has_pending_text: bool,
+) -> ToolbarOutput {
+    let mut output = ToolbarOutput::default();
+
+    ui.heading("Tools");
+    ui.separator();
+
+    for tool in ToolKind::ALL {
+        if ui
+            .selectable_label(active_tool == tool, tool.label())
+            .clicked()
+        {
+            output.tool_change = Some(tool);
+        }
+    }
+
+    ui.separator();
+    ui.label("Stroke");
+
+    let mut egui_color = color.to_egui();
+    if color_picker::color_edit_button_srgba(ui, &mut egui_color, color_picker::Alpha::Opaque)
+        .changed()
+    {
+        *color = RgbaColor::from(egui_color);
+    }
+
+    ui.add(
+        egui::Slider::new(stroke_thickness, 1.0..=24.0)
+            .text("Thickness")
+            .clamping(egui::SliderClamping::Always),
+    );
+
+    ui.separator();
+    ui.label("Text");
+    ui.add(
+        egui::Slider::new(text_size, 10.0..=96.0)
+            .text("Size")
+            .clamping(egui::SliderClamping::Always),
+    );
+    ui.add(
+        egui::TextEdit::multiline(text_buffer)
+            .desired_rows(4)
+            .hint_text("Click the image to place text"),
+    );
+
+    if has_pending_text {
+        ui.colored_label(
+            Color32::from_rgb(80, 220, 140),
+            "Click Add Text in the floating editor",
+        );
+    }
+
+    if has_pending_crop {
+        ui.separator();
+        ui.label("Crop");
+
+        if ui.button("Commit Crop").clicked() {
+            output.commit_crop = true;
+        }
+
+        if ui.button("Cancel Crop").clicked() {
+            output.cancel_crop = true;
+        }
+    }
+
+    ui.separator();
+    ui.label("View");
+    ui.add(
+        egui::Slider::new(zoom, min_zoom..=max_zoom)
+            .text("Zoom")
+            .clamping(egui::SliderClamping::Always),
+    );
+
+    ui.separator();
+    ui.label("Save Path");
+    ui.add(egui::TextEdit::singleline(save_path).desired_width(f32::INFINITY));
+
+    output
+}
