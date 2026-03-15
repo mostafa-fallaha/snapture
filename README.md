@@ -73,7 +73,6 @@ cargo run
 - Screenshot capture uses `xdg-desktop-portal` through `ashpd`, which is the intended path for GNOME Wayland.
 - This MVP intentionally does not try to bypass Wayland with a custom global screen overlay or direct X11-only screen grab APIs.
 - On startup, the portal screenshot flow runs before the editor window is created. The `eframe` UI only opens after a screenshot has been returned.
-- If you trigger another capture from inside the editor, the app hides its own window, invokes the portal screenshot UI, and restores the editor once the image is returned.
 - Save uses a `zenity` save dialog on Linux, initialized from the suggested path shown in the left toolbar.
 - Clipboard image support depends on the Wayland clipboard stack on the host session.
 - Text export uses a system sans font discovered at runtime. If no system font is available, text export will fail until one is installed.

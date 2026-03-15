@@ -1,19 +1,13 @@
-use std::{
-    path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender},
-    time::Duration,
-};
+use std::path::PathBuf;
 
 use eframe::egui::{
     self, CentralPanel, Context, Key, KeyboardShortcut, Modifiers, SidePanel, TopBottomPanel,
-    ViewportCommand,
 };
 
 use crate::{
-    capture::{self, CaptureMessage},
+    capture::CapturedImage,
     config::AppConfig,
     editor::{CanvasState, Document, HistoryManager, canvas},
-    error::AppResult,
     model::{
         overlay::{CropOverlay, OverlayObject},
         types::{ImagePoint, ImageRect, RgbaColor, StrokeStyle, TextStyle},
@@ -29,9 +23,6 @@ pub struct SnaptureApp {
     history: HistoryManager,
     texture: Option<egui::TextureHandle>,
     texture_revision: u64,
-    capture_sender: Sender<CaptureMessage>,
-    capture_receiver: Receiver<CaptureMessage>,
-    capture_in_progress: bool,
     active_tool: ToolKind,
     draft: Option<DraftOverlay>,
     pending_crop: Option<ImageRect>,
@@ -49,11 +40,10 @@ impl SnaptureApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         config: AppConfig,
-        initial_capture: capture::CapturedImage,
+        initial_capture: CapturedImage,
     ) -> Self {
         let document = Document::from_image(initial_capture.image, initial_capture.source_uri);
         let history = HistoryManager::new(config.history_limit);
-        let (capture_sender, capture_receiver) = mpsc::channel();
         let save_path = config.default_save_path().display().to_string();
 
         let mut app = Self {
@@ -62,9 +52,6 @@ impl SnaptureApp {
             history,
             texture: None,
             texture_revision: 0,
-            capture_sender,
-            capture_receiver,
-            capture_in_progress: false,
             active_tool: ToolKind::Pen,
             draft: None,
             pending_crop: None,
@@ -118,50 +105,6 @@ impl SnaptureApp {
         if self.active_tool != tool {
             self.active_tool = tool;
             self.clear_transient_state();
-        }
-    }
-
-    fn start_capture(&mut self, ctx: &Context) {
-        if self.capture_in_progress {
-            return;
-        }
-
-        self.capture_in_progress = true;
-        self.clear_transient_state();
-        self.set_status("Hiding window and starting portal capture...");
-        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-        capture::spawn_portal_capture(
-            self.capture_sender.clone(),
-            ctx.clone(),
-            Duration::from_millis(self.config.capture_hide_delay_ms),
-        );
-    }
-
-    fn poll_capture(&mut self, ctx: &Context) {
-        if let Ok(message) = self.capture_receiver.try_recv() {
-            self.capture_in_progress = false;
-            match message {
-                CaptureMessage::Finished(result) => self.handle_capture_result(result, ctx),
-            }
-        }
-    }
-
-    fn handle_capture_result(&mut self, result: AppResult<capture::CapturedImage>, ctx: &Context) {
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
-
-        match result {
-            Ok(captured) => {
-                self.document = Document::from_image(captured.image, captured.source_uri);
-                self.history.clear();
-                self.clear_transient_state();
-                self.canvas_state.zoom = 1.0;
-                self.refresh_texture(ctx);
-                self.set_status("Screenshot captured. Draw, crop, or add text.");
-            }
-            Err(error) => {
-                self.set_status(format!("Capture failed: {error}"));
-            }
         }
     }
 
@@ -368,7 +311,6 @@ impl SnaptureApp {
 
 impl eframe::App for SnaptureApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        self.poll_capture(ctx);
         self.handle_shortcuts(ctx);
 
         TopBottomPanel::top("topbar").show(ctx, |ui| {
@@ -376,13 +318,9 @@ impl eframe::App for SnaptureApp {
                 ui,
                 self.history.can_undo(),
                 self.history.can_redo(),
-                self.capture_in_progress,
                 &self.status,
             );
 
-            if output.capture_clicked {
-                self.start_capture(ctx);
-            }
             if output.save_clicked {
                 self.save_document();
             }
@@ -444,9 +382,5 @@ impl eframe::App for SnaptureApp {
         });
 
         self.show_text_editor(ctx);
-
-        if self.capture_in_progress {
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
     }
 }

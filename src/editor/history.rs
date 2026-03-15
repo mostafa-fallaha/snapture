@@ -62,11 +62,6 @@ impl HistoryManager {
         true
     }
 
-    pub fn clear(&mut self) {
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-    }
-
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
