@@ -62,7 +62,10 @@ impl SnaptureApp {
             text_buffer: String::new(),
             save_path,
             canvas_state: CanvasState::default(),
-            status: "Screenshot captured. Draw, crop, or add text.".into(),
+            status: format!(
+                "Screenshot captured. {}",
+                Self::tool_status_message(ToolKind::Pen)
+            ),
         };
 
         app.stroke_color = app.config.default_color;
@@ -101,10 +104,38 @@ impl SnaptureApp {
         self.pending_text_anchor = None;
     }
 
-    fn set_active_tool(&mut self, tool: ToolKind) {
+    fn full_image_crop_rect(&self) -> ImageRect {
+        let [width, height] = self.document.image_size();
+        ImageRect::from_points(
+            ImagePoint::new(0.0, 0.0),
+            ImagePoint::new(width as f32, height as f32),
+        )
+    }
+
+    fn activate_tool(&mut self, tool: ToolKind) {
         if self.active_tool != tool {
             self.active_tool = tool;
             self.clear_transient_state();
+        }
+
+        if tool == ToolKind::Crop {
+            self.draft = None;
+            self.pending_text_anchor = None;
+            self.pending_crop = Some(self.full_image_crop_rect());
+        }
+
+        self.set_status(Self::tool_status_message(tool));
+    }
+
+    fn tool_status_message(tool: ToolKind) -> &'static str {
+        match tool {
+            ToolKind::Pen => "Pen active. Drag on the image to draw.",
+            ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
+            ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
+            ToolKind::Text => "Text active. Click the image to place a text anchor.",
+            ToolKind::Crop => {
+                "Crop active. Resize or move the crop box, then commit or cancel it in the toolbar."
+            }
         }
     }
 
@@ -132,10 +163,10 @@ impl SnaptureApp {
         overlays
     }
 
-    fn commit_overlay(&mut self, overlay: OverlayObject) {
+    fn commit_overlay(&mut self, overlay: OverlayObject, status: &'static str) {
         self.history.checkpoint(&self.document);
         self.document.add_overlay(overlay);
-        self.set_status("Annotation added.");
+        self.set_status(status);
     }
 
     fn commit_crop(&mut self, ctx: &Context) {
@@ -147,7 +178,7 @@ impl SnaptureApp {
         match self.document.crop_to(selection) {
             Ok(()) => {
                 self.refresh_texture(ctx);
-                self.set_status("Crop applied.");
+                self.set_status("Crop applied. Click Crop again if you want to start another crop.");
             }
             Err(error) => self.set_status(format!("Crop failed: {error}")),
         }
@@ -230,13 +261,17 @@ impl SnaptureApp {
                             self.text_buffer.clone(),
                             self.current_text_style(),
                         ) {
-                            self.commit_overlay(overlay);
+                            self.commit_overlay(
+                                overlay,
+                                "Text added. Click the image to place another text annotation.",
+                            );
                             self.pending_text_anchor = None;
                         }
                     }
 
                     if ui.button("Cancel").clicked() {
                         self.pending_text_anchor = None;
+                        self.set_status(Self::tool_status_message(ToolKind::Text));
                     }
                 });
             });
@@ -244,44 +279,82 @@ impl SnaptureApp {
 
     fn handle_canvas_output(&mut self, output: canvas::CanvasOutput, ctx: &Context) {
         match self.active_tool {
-            ToolKind::Pen | ToolKind::Rectangle | ToolKind::Arrow | ToolKind::Crop => {
-                if let Some(start) = output.drag_started {
-                    self.draft =
-                        tools::begin_drag(self.active_tool, start, self.current_stroke_style());
-                    if self.active_tool == ToolKind::Crop {
-                        self.pending_crop = None;
-                    }
-                }
+            ToolKind::Pen => self.handle_pen_output(&output, ctx),
+            ToolKind::Rectangle => self.handle_rectangle_output(&output, ctx),
+            ToolKind::Arrow => self.handle_arrow_output(&output, ctx),
+            ToolKind::Text => self.handle_text_output(&output),
+            ToolKind::Crop => self.handle_crop_output(&output),
+        }
+    }
 
-                if let Some(current) = output.drag_current {
-                    if let Some(draft) = &mut self.draft {
-                        draft.update(current);
-                    }
-                }
+    fn handle_pen_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        self.handle_shape_output(
+            output,
+            ctx,
+            ToolKind::Pen,
+            "Pen stroke added. Drag again to keep drawing.",
+        );
+    }
 
-                if let Some(end) = output.drag_stopped {
-                    if let Some(mut draft) = self.draft.take() {
-                        draft.update(end);
-                        match draft.finish() {
-                            Some(OverlayObject::Crop(crop)) => {
-                                self.pending_crop = Some(crop.rect);
-                                self.set_status(
-                                    "Crop region selected. Commit or cancel it in the toolbar.",
-                                );
-                            }
-                            Some(overlay) => self.commit_overlay(overlay),
-                            None => {}
-                        }
-                    }
-                    ctx.request_repaint();
+    fn handle_rectangle_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        self.handle_shape_output(
+            output,
+            ctx,
+            ToolKind::Rectangle,
+            "Rectangle added. Drag again to place another box.",
+        );
+    }
+
+    fn handle_arrow_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        self.handle_shape_output(
+            output,
+            ctx,
+            ToolKind::Arrow,
+            "Arrow added. Drag again to place another arrow.",
+        );
+    }
+
+    fn handle_shape_output(
+        &mut self,
+        output: &canvas::CanvasOutput,
+        ctx: &Context,
+        tool: ToolKind,
+        commit_status: &'static str,
+    ) {
+        if let Some(start) = output.drag_started {
+            self.draft = tools::begin_drag(tool, start, self.current_stroke_style());
+        }
+
+        if let Some(current) = output.drag_current {
+            if let Some(draft) = &mut self.draft {
+                draft.update(current);
+            }
+        }
+
+        if let Some(end) = output.drag_stopped {
+            if let Some(mut draft) = self.draft.take() {
+                draft.update(end);
+                if let Some(overlay) = draft.finish() {
+                    self.commit_overlay(overlay, commit_status);
                 }
             }
-            ToolKind::Text => {
-                if let Some(position) = output.clicked {
-                    self.pending_text_anchor = Some(position);
-                    self.set_status("Text anchor placed. Finish the text in the floating editor.");
-                }
-            }
+            ctx.request_repaint();
+        }
+    }
+
+    fn handle_crop_output(&mut self, output: &canvas::CanvasOutput) {
+        if let Some(crop_rect) = output.crop_rect {
+            self.pending_crop = Some(crop_rect);
+            self.set_status(
+                "Crop box updated. Commit it or cancel it in the toolbar when it looks right.",
+            );
+        }
+    }
+
+    fn handle_text_output(&mut self, output: &canvas::CanvasOutput) {
+        if let Some(position) = output.clicked {
+            self.pending_text_anchor = Some(position);
+            self.set_status("Text anchor placed. Finish the text in the floating editor.");
         }
     }
 
@@ -358,14 +431,14 @@ impl eframe::App for SnaptureApp {
                 );
 
                 if let Some(tool) = output.tool_change {
-                    self.set_active_tool(tool);
+                    self.activate_tool(tool);
                 }
                 if output.commit_crop {
                     self.commit_crop(ctx);
                 }
                 if output.cancel_crop {
                     self.pending_crop = None;
-                    self.set_status("Crop cancelled.");
+                    self.set_status(Self::tool_status_message(ToolKind::Crop));
                 }
             });
 
@@ -377,6 +450,8 @@ impl eframe::App for SnaptureApp {
                 self.texture.as_ref(),
                 &mut self.canvas_state,
                 &preview_overlays,
+                self.active_tool == ToolKind::Crop,
+                self.pending_crop,
             );
             self.handle_canvas_output(output, ctx);
         });

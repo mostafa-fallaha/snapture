@@ -1,5 +1,6 @@
 use eframe::egui::{
-    self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, TextureHandle, pos2, vec2,
+    self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke,
+    TextureHandle, pos2, vec2,
 };
 
 use crate::{
@@ -13,11 +14,15 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CanvasState {
     pub zoom: f32,
+    crop_interaction: Option<CropInteractionState>,
 }
 
 impl Default for CanvasState {
     fn default() -> Self {
-        Self { zoom: 1.0 }
+        Self {
+            zoom: 1.0,
+            crop_interaction: None,
+        }
     }
 }
 
@@ -28,6 +33,7 @@ pub struct CanvasOutput {
     pub drag_current: Option<ImagePoint>,
     pub drag_stopped: Option<ImagePoint>,
     pub clicked: Option<ImagePoint>,
+    pub crop_rect: Option<ImageRect>,
 }
 
 #[derive(Clone, Copy)]
@@ -69,12 +75,39 @@ impl ScreenTransform {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CropInteractionState {
+    kind: CropInteractionKind,
+    origin: ImagePoint,
+    initial_rect: ImageRect,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CropInteractionKind {
+    Move,
+    Resize(CropHandle),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CropHandle {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     document: &Document,
     texture: Option<&TextureHandle>,
     state: &mut CanvasState,
     preview_overlays: &[OverlayObject],
+    crop_tool_active: bool,
+    pending_crop: Option<ImageRect>,
 ) -> CanvasOutput {
     let available = ui.available_size_before_wrap();
     let (response, painter) = ui.allocate_painter(available, Sense::click_and_drag());
@@ -130,16 +163,74 @@ pub fn show(
 
     output.hover_position = pointer_pos.and_then(|pos| transform.screen_to_image(pos));
 
+    if !crop_tool_active {
+        state.crop_interaction = None;
+    }
+
+    let hover_crop_interaction = if crop_tool_active {
+        pending_crop.and_then(|rect| {
+            pointer_pos.and_then(|pos| crop_interaction_at(transform.image_rect_to_screen(rect), pos))
+        })
+    } else {
+        None
+    };
+
+    if crop_tool_active {
+        let cursor = state
+            .crop_interaction
+            .map(|interaction| crop_cursor(interaction.kind))
+            .or_else(|| hover_crop_interaction.map(crop_cursor));
+        if let Some(cursor) = cursor {
+            ui.output_mut(|output| output.cursor_icon = cursor);
+        }
+    }
+
     if response.drag_started() {
-        output.drag_started = press_origin.and_then(|pos| transform.screen_to_image(pos));
+        let crop_drag_started = if crop_tool_active {
+            if let (Some(rect), Some(origin_screen), Some(origin_image)) = (
+                pending_crop,
+                press_origin,
+                press_origin.map(|pos| transform.screen_to_image_clamped(pos)),
+            ) {
+                crop_interaction_at(transform.image_rect_to_screen(rect), origin_screen).map(
+                    |kind| CropInteractionState {
+                        kind,
+                        origin: origin_image,
+                        initial_rect: rect,
+                    },
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(interaction) = crop_drag_started {
+            state.crop_interaction = Some(interaction);
+        } else if !crop_tool_active {
+            output.drag_started = press_origin.and_then(|pos| transform.screen_to_image(pos));
+        }
     }
 
-    if response.dragged() {
-        output.drag_current = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos));
-    }
+    if let Some(interaction) = state.crop_interaction {
+        if response.dragged() || response.drag_stopped() {
+            if let Some(current) = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos)) {
+                output.crop_rect = Some(apply_crop_interaction(interaction, current, image_size));
+            }
+        }
 
-    if response.drag_stopped() {
-        output.drag_stopped = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos));
+        if response.drag_stopped() {
+            state.crop_interaction = None;
+        }
+    } else if !crop_tool_active {
+        if response.dragged() {
+            output.drag_current = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos));
+        }
+
+        if response.drag_stopped() {
+            output.drag_stopped = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos));
+        }
     }
 
     if response.clicked() {
@@ -224,13 +315,23 @@ fn paint_overlay(
                 text.style.color.to_egui(),
             );
         }
-        OverlayObject::Crop(crop) => paint_crop_overlay(painter, transform, crop),
+        OverlayObject::Crop(crop) => paint_crop_overlay(painter, transform, crop, preview),
     }
 }
 
-fn paint_crop_overlay(painter: &egui::Painter, transform: ScreenTransform, crop: &CropOverlay) {
+fn paint_crop_overlay(
+    painter: &egui::Painter,
+    transform: ScreenTransform,
+    crop: &CropOverlay,
+    preview: bool,
+) {
     let screen_rect = transform.image_rect_to_screen(crop.rect);
     let shade = Color32::from_rgba_unmultiplied(0, 0, 0, 96);
+    let border_color = if preview {
+        Color32::from_rgb(80, 220, 140)
+    } else {
+        Color32::from_rgb(64, 196, 120)
+    };
 
     let top = Rect::from_min_max(
         transform.image_rect.min,
@@ -258,7 +359,159 @@ fn paint_crop_overlay(painter: &egui::Painter, transform: ScreenTransform, crop:
     painter.rect_stroke(
         screen_rect,
         0.0,
-        Stroke::new(2.0, Color32::from_rgb(80, 220, 140)),
+        Stroke::new(if preview { 3.0 } else { 2.0 }, border_color),
         egui::StrokeKind::Inside,
     );
+
+    if preview {
+        for center in crop_handle_positions(screen_rect) {
+            let handle_rect = Rect::from_center_size(center, vec2(9.0, 9.0));
+            painter.rect_filled(handle_rect, 2.0, Color32::WHITE);
+            painter.rect_stroke(
+                handle_rect,
+                2.0,
+                Stroke::new(1.5, border_color),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
+fn crop_interaction_at(screen_rect: Rect, point: Pos2) -> Option<CropInteractionKind> {
+    let margin = 10.0;
+    let near_left = (point.x - screen_rect.min.x).abs() <= margin;
+    let near_right = (point.x - screen_rect.max.x).abs() <= margin;
+    let near_top = (point.y - screen_rect.min.y).abs() <= margin;
+    let near_bottom = (point.y - screen_rect.max.y).abs() <= margin;
+    let within_x = point.x >= screen_rect.min.x - margin && point.x <= screen_rect.max.x + margin;
+    let within_y = point.y >= screen_rect.min.y - margin && point.y <= screen_rect.max.y + margin;
+
+    if near_left && near_top {
+        return Some(CropInteractionKind::Resize(CropHandle::NorthWest));
+    }
+    if near_right && near_top {
+        return Some(CropInteractionKind::Resize(CropHandle::NorthEast));
+    }
+    if near_left && near_bottom {
+        return Some(CropInteractionKind::Resize(CropHandle::SouthWest));
+    }
+    if near_right && near_bottom {
+        return Some(CropInteractionKind::Resize(CropHandle::SouthEast));
+    }
+    if near_top && within_x {
+        return Some(CropInteractionKind::Resize(CropHandle::North));
+    }
+    if near_bottom && within_x {
+        return Some(CropInteractionKind::Resize(CropHandle::South));
+    }
+    if near_left && within_y {
+        return Some(CropInteractionKind::Resize(CropHandle::West));
+    }
+    if near_right && within_y {
+        return Some(CropInteractionKind::Resize(CropHandle::East));
+    }
+    if screen_rect.contains(point) {
+        return Some(CropInteractionKind::Move);
+    }
+
+    None
+}
+
+fn crop_cursor(interaction: CropInteractionKind) -> CursorIcon {
+    match interaction {
+        CropInteractionKind::Move => CursorIcon::Grab,
+        CropInteractionKind::Resize(CropHandle::North | CropHandle::South) => {
+            CursorIcon::ResizeVertical
+        }
+        CropInteractionKind::Resize(CropHandle::East | CropHandle::West) => {
+            CursorIcon::ResizeHorizontal
+        }
+        CropInteractionKind::Resize(CropHandle::NorthWest | CropHandle::SouthEast) => {
+            CursorIcon::ResizeNwSe
+        }
+        CropInteractionKind::Resize(CropHandle::NorthEast | CropHandle::SouthWest) => {
+            CursorIcon::ResizeNeSw
+        }
+    }
+}
+
+fn apply_crop_interaction(
+    interaction: CropInteractionState,
+    current: ImagePoint,
+    image_size: [u32; 2],
+) -> ImageRect {
+    let width_limit = image_size[0] as f32;
+    let height_limit = image_size[1] as f32;
+    let min_size = 1.0;
+
+    match interaction.kind {
+        CropInteractionKind::Move => {
+            let width = interaction.initial_rect.width();
+            let height = interaction.initial_rect.height();
+            let dx = current.x - interaction.origin.x;
+            let dy = current.y - interaction.origin.y;
+            let min_x = (interaction.initial_rect.min.x + dx).clamp(0.0, (width_limit - width).max(0.0));
+            let min_y =
+                (interaction.initial_rect.min.y + dy).clamp(0.0, (height_limit - height).max(0.0));
+
+            ImageRect::from_points(
+                ImagePoint::new(min_x, min_y),
+                ImagePoint::new(min_x + width, min_y + height),
+            )
+        }
+        CropInteractionKind::Resize(handle) => {
+            let rect = interaction.initial_rect.normalized();
+            let mut min = rect.min;
+            let mut max = rect.max;
+
+            match handle {
+                CropHandle::North => {
+                    min.y = current.y.clamp(0.0, rect.max.y - min_size);
+                }
+                CropHandle::South => {
+                    max.y = current.y.clamp(rect.min.y + min_size, height_limit);
+                }
+                CropHandle::East => {
+                    max.x = current.x.clamp(rect.min.x + min_size, width_limit);
+                }
+                CropHandle::West => {
+                    min.x = current.x.clamp(0.0, rect.max.x - min_size);
+                }
+                CropHandle::NorthEast => {
+                    min.y = current.y.clamp(0.0, rect.max.y - min_size);
+                    max.x = current.x.clamp(rect.min.x + min_size, width_limit);
+                }
+                CropHandle::NorthWest => {
+                    min.y = current.y.clamp(0.0, rect.max.y - min_size);
+                    min.x = current.x.clamp(0.0, rect.max.x - min_size);
+                }
+                CropHandle::SouthEast => {
+                    max.y = current.y.clamp(rect.min.y + min_size, height_limit);
+                    max.x = current.x.clamp(rect.min.x + min_size, width_limit);
+                }
+                CropHandle::SouthWest => {
+                    max.y = current.y.clamp(rect.min.y + min_size, height_limit);
+                    min.x = current.x.clamp(0.0, rect.max.x - min_size);
+                }
+            }
+
+            ImageRect { min, max }.normalized()
+        }
+    }
+}
+
+fn crop_handle_positions(screen_rect: Rect) -> [Pos2; 8] {
+    let center_x = (screen_rect.min.x + screen_rect.max.x) * 0.5;
+    let center_y = (screen_rect.min.y + screen_rect.max.y) * 0.5;
+
+    [
+        screen_rect.min,
+        pos2(center_x, screen_rect.min.y),
+        pos2(screen_rect.max.x, screen_rect.min.y),
+        pos2(screen_rect.max.x, center_y),
+        screen_rect.max,
+        pos2(center_x, screen_rect.max.y),
+        pos2(screen_rect.min.x, screen_rect.max.y),
+        pos2(screen_rect.min.x, center_y),
+    ]
 }
