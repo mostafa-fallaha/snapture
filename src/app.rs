@@ -27,6 +27,7 @@ pub struct SnaptureApp {
     draft: Option<DraftOverlay>,
     pending_crop: Option<ImageRect>,
     pending_text_anchor: Option<ImagePoint>,
+    text_editor_should_focus: bool,
     stroke_color: RgbaColor,
     stroke_thickness: f32,
     text_size: f32,
@@ -56,6 +57,7 @@ impl SnaptureApp {
             draft: None,
             pending_crop: None,
             pending_text_anchor: None,
+            text_editor_should_focus: false,
             stroke_color: RgbaColor::default(),
             stroke_thickness: 4.0,
             text_size: 28.0,
@@ -102,6 +104,7 @@ impl SnaptureApp {
         self.draft = None;
         self.pending_crop = None;
         self.pending_text_anchor = None;
+        self.text_editor_should_focus = false;
     }
 
     fn full_image_crop_rect(&self) -> ImageRect {
@@ -133,7 +136,7 @@ impl SnaptureApp {
             ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
             ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
             ToolKind::Text => {
-                "Text active. Click the image to place a text anchor, or drag existing text to reposition it."
+                "Text active. Click the image to place a text anchor and type in the floating dialog, or drag existing text to reposition it."
             }
             ToolKind::Crop => {
                 "Crop active. Resize or move the crop box, then commit or cancel it in the toolbar."
@@ -237,6 +240,7 @@ impl SnaptureApp {
         let Some(anchor) = self.pending_text_anchor else {
             return;
         };
+        let should_focus = self.text_editor_should_focus;
 
         egui::Window::new("Text Annotation")
             .collapsible(false)
@@ -245,12 +249,15 @@ impl SnaptureApp {
             .anchor(egui::Align2::RIGHT_TOP, [-16.0, 72.0])
             .show(ctx, |ui| {
                 ui.label(format!("Anchor: {:.0}, {:.0}", anchor.x, anchor.y));
-                ui.add(
+                let response = ui.add(
                     egui::TextEdit::multiline(&mut self.text_buffer)
                         .desired_rows(4)
                         .desired_width(280.0)
                         .hint_text("Type text and press Add Text"),
                 );
+                if should_focus {
+                    response.request_focus();
+                }
 
                 ui.horizontal(|ui| {
                     if ui
@@ -270,15 +277,23 @@ impl SnaptureApp {
                                 "Text added. Click the image to place another text annotation, or drag existing text to reposition it.",
                             );
                             self.pending_text_anchor = None;
+                            self.text_editor_should_focus = false;
+                            self.text_buffer.clear();
                         }
                     }
 
                     if ui.button("Cancel").clicked() {
                         self.pending_text_anchor = None;
+                        self.text_editor_should_focus = false;
+                        self.text_buffer.clear();
                         self.set_status(Self::tool_status_message(ToolKind::Text));
                     }
                 });
             });
+
+        if should_focus {
+            self.text_editor_should_focus = false;
+        }
     }
 
     fn handle_canvas_output(&mut self, output: canvas::CanvasOutput, ctx: &Context) {
@@ -359,6 +374,7 @@ impl SnaptureApp {
         if output.text_drag_started.is_some() {
             self.history.checkpoint(&self.document);
             self.pending_text_anchor = None;
+            self.text_editor_should_focus = false;
             self.set_status("Moving text annotation...");
         }
 
@@ -382,8 +398,10 @@ impl SnaptureApp {
         }
 
         if let Some(position) = output.clicked {
+            self.text_buffer.clear();
             self.pending_text_anchor = Some(position);
-            self.set_status("Text anchor placed. Finish the text in the floating editor.");
+            self.text_editor_should_focus = true;
+            self.set_status("Text anchor placed. Enter text in the floating editor.");
         }
     }
 
@@ -450,13 +468,11 @@ impl eframe::App for SnaptureApp {
                     &mut self.stroke_color,
                     &mut self.stroke_thickness,
                     &mut self.text_size,
-                    &mut self.text_buffer,
                     &mut self.save_path,
                     &mut self.canvas_state.zoom,
                     self.config.min_zoom,
                     self.config.max_zoom,
                     self.pending_crop.is_some(),
-                    self.pending_text_anchor.is_some(),
                 );
 
                 if let Some(tool) = output.tool_change {

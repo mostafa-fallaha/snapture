@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, color_picker};
+use eframe::egui::{self, color_picker};
 
 use crate::{model::types::RgbaColor, tools::ToolKind};
 
@@ -15,13 +15,11 @@ pub fn show(
     color: &mut RgbaColor,
     stroke_thickness: &mut f32,
     text_size: &mut f32,
-    text_buffer: &mut String,
     save_path: &mut String,
     zoom: &mut f32,
     min_zoom: f32,
     max_zoom: f32,
     has_pending_crop: bool,
-    has_pending_text: bool,
 ) -> ToolbarOutput {
     let mut output = ToolbarOutput::default();
 
@@ -60,18 +58,6 @@ pub fn show(
             .text("Size")
             .clamping(egui::SliderClamping::Always),
     );
-    ui.add(
-        egui::TextEdit::multiline(text_buffer)
-            .desired_rows(4)
-            .hint_text("Click the image to place text"),
-    );
-
-    if has_pending_text {
-        ui.colored_label(
-            Color32::from_rgb(80, 220, 140),
-            "Click Add Text in the floating editor",
-        );
-    }
 
     if has_pending_crop {
         ui.separator();
