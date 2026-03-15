@@ -9,12 +9,7 @@ pub struct TopbarOutput {
     pub fit_clicked: bool,
 }
 
-pub fn show(
-    ui: &mut egui::Ui,
-    can_undo: bool,
-    can_redo: bool,
-    status: &str,
-) -> TopbarOutput {
+pub fn show(ui: &mut egui::Ui, can_undo: bool, can_redo: bool, status: &str) -> TopbarOutput {
     let mut output = TopbarOutput::default();
 
     ui.horizontal_wrapped(|ui| {

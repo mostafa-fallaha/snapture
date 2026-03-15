@@ -132,7 +132,9 @@ impl SnaptureApp {
             ToolKind::Pen => "Pen active. Drag on the image to draw.",
             ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
             ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
-            ToolKind::Text => "Text active. Click the image to place a text anchor.",
+            ToolKind::Text => {
+                "Text active. Click the image to place a text anchor, or drag existing text to reposition it."
+            }
             ToolKind::Crop => {
                 "Crop active. Resize or move the crop box, then commit or cancel it in the toolbar."
             }
@@ -178,7 +180,9 @@ impl SnaptureApp {
         match self.document.crop_to(selection) {
             Ok(()) => {
                 self.refresh_texture(ctx);
-                self.set_status("Crop applied. Click Crop again if you want to start another crop.");
+                self.set_status(
+                    "Crop applied. Click Crop again if you want to start another crop.",
+                );
             }
             Err(error) => self.set_status(format!("Crop failed: {error}")),
         }
@@ -263,7 +267,7 @@ impl SnaptureApp {
                         ) {
                             self.commit_overlay(
                                 overlay,
-                                "Text added. Click the image to place another text annotation.",
+                                "Text added. Click the image to place another text annotation, or drag existing text to reposition it.",
                             );
                             self.pending_text_anchor = None;
                         }
@@ -352,6 +356,31 @@ impl SnaptureApp {
     }
 
     fn handle_text_output(&mut self, output: &canvas::CanvasOutput) {
+        if output.text_drag_started.is_some() {
+            self.history.checkpoint(&self.document);
+            self.pending_text_anchor = None;
+            self.set_status("Moving text annotation...");
+        }
+
+        if let Some(drag) = output.text_drag_current {
+            if self
+                .document
+                .set_text_anchor(drag.overlay_index, drag.anchor)
+            {
+                self.set_status("Moving text annotation...");
+            }
+        }
+
+        if let Some(drag) = output.text_drag_stopped {
+            if self
+                .document
+                .set_text_anchor(drag.overlay_index, drag.anchor)
+            {
+                self.set_status("Text moved. Drag existing text again to reposition it.");
+            }
+            return;
+        }
+
         if let Some(position) = output.clicked {
             self.pending_text_anchor = Some(position);
             self.set_status("Text anchor placed. Finish the text in the floating editor.");
@@ -452,6 +481,8 @@ impl eframe::App for SnaptureApp {
                 &preview_overlays,
                 self.active_tool == ToolKind::Crop,
                 self.pending_crop,
+                self.active_tool == ToolKind::Text,
+                self.pending_text_anchor.is_none(),
             );
             self.handle_canvas_output(output, ctx);
         });

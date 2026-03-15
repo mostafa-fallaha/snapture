@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke,
-    TextureHandle, pos2, vec2,
+    self, Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Shape, Stroke, TextureHandle,
+    pos2, vec2,
 };
 
 use crate::{
@@ -15,6 +15,7 @@ use crate::{
 pub struct CanvasState {
     pub zoom: f32,
     crop_interaction: Option<CropInteractionState>,
+    text_interaction: Option<TextInteractionState>,
 }
 
 impl Default for CanvasState {
@@ -22,6 +23,7 @@ impl Default for CanvasState {
         Self {
             zoom: 1.0,
             crop_interaction: None,
+            text_interaction: None,
         }
     }
 }
@@ -34,6 +36,15 @@ pub struct CanvasOutput {
     pub drag_stopped: Option<ImagePoint>,
     pub clicked: Option<ImagePoint>,
     pub crop_rect: Option<ImageRect>,
+    pub text_drag_started: Option<usize>,
+    pub text_drag_current: Option<TextDragOutput>,
+    pub text_drag_stopped: Option<TextDragOutput>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TextDragOutput {
+    pub overlay_index: usize,
+    pub anchor: ImagePoint,
 }
 
 #[derive(Clone, Copy)]
@@ -100,6 +111,14 @@ enum CropHandle {
     SouthWest,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TextInteractionState {
+    overlay_index: usize,
+    origin: ImagePoint,
+    initial_anchor: ImagePoint,
+    bounds: ImageRect,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     document: &Document,
@@ -108,6 +127,8 @@ pub fn show(
     preview_overlays: &[OverlayObject],
     crop_tool_active: bool,
     pending_crop: Option<ImageRect>,
+    text_tool_active: bool,
+    text_drag_enabled: bool,
 ) -> CanvasOutput {
     let available = ui.available_size_before_wrap();
     let (response, painter) = ui.allocate_painter(available, Sense::click_and_drag());
@@ -166,11 +187,22 @@ pub fn show(
     if !crop_tool_active {
         state.crop_interaction = None;
     }
+    if !text_tool_active || !text_drag_enabled {
+        state.text_interaction = None;
+    }
 
     let hover_crop_interaction = if crop_tool_active {
         pending_crop.and_then(|rect| {
-            pointer_pos.and_then(|pos| crop_interaction_at(transform.image_rect_to_screen(rect), pos))
+            pointer_pos
+                .and_then(|pos| crop_interaction_at(transform.image_rect_to_screen(rect), pos))
         })
+    } else {
+        None
+    };
+    let hover_text_interaction = if text_tool_active && text_drag_enabled {
+        output
+            .hover_position
+            .and_then(|point| text_overlay_at(document, point))
     } else {
         None
     };
@@ -180,6 +212,17 @@ pub fn show(
             .crop_interaction
             .map(|interaction| crop_cursor(interaction.kind))
             .or_else(|| hover_crop_interaction.map(crop_cursor));
+        if let Some(cursor) = cursor {
+            ui.output_mut(|output| output.cursor_icon = cursor);
+        }
+    } else if text_tool_active && text_drag_enabled {
+        let cursor = if state.text_interaction.is_some() {
+            Some(CursorIcon::Grabbing)
+        } else if hover_text_interaction.is_some() {
+            Some(CursorIcon::Grab)
+        } else {
+            None
+        };
         if let Some(cursor) = cursor {
             ui.output_mut(|output| output.cursor_icon = cursor);
         }
@@ -205,10 +248,29 @@ pub fn show(
         } else {
             None
         };
+        let text_drag_started = if text_tool_active && text_drag_enabled {
+            press_origin
+                .and_then(|pos| transform.screen_to_image(pos))
+                .and_then(|point| {
+                    text_overlay_at(document, point).map(
+                        |(overlay_index, initial_anchor, bounds)| TextInteractionState {
+                            overlay_index,
+                            origin: point,
+                            initial_anchor,
+                            bounds,
+                        },
+                    )
+                })
+        } else {
+            None
+        };
 
         if let Some(interaction) = crop_drag_started {
             state.crop_interaction = Some(interaction);
-        } else if !crop_tool_active {
+        } else if let Some(interaction) = text_drag_started {
+            output.text_drag_started = Some(interaction.overlay_index);
+            state.text_interaction = Some(interaction);
+        } else if !crop_tool_active && !text_tool_active {
             output.drag_started = press_origin.and_then(|pos| transform.screen_to_image(pos));
         }
     }
@@ -223,7 +285,26 @@ pub fn show(
         if response.drag_stopped() {
             state.crop_interaction = None;
         }
-    } else if !crop_tool_active {
+    } else if let Some(interaction) = state.text_interaction {
+        if response.dragged() || response.drag_stopped() {
+            if let Some(current) = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos)) {
+                let anchor = apply_text_interaction(interaction, current, image_size);
+                let drag = TextDragOutput {
+                    overlay_index: interaction.overlay_index,
+                    anchor,
+                };
+                if response.drag_stopped() {
+                    output.text_drag_stopped = Some(drag);
+                } else {
+                    output.text_drag_current = Some(drag);
+                }
+            }
+        }
+
+        if response.drag_stopped() {
+            state.text_interaction = None;
+        }
+    } else if !crop_tool_active && !text_tool_active {
         if response.dragged() {
             output.drag_current = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos));
         }
@@ -233,7 +314,14 @@ pub fn show(
         }
     }
 
-    if response.clicked() {
+    let clicked_existing_text = text_tool_active
+        && text_drag_enabled
+        && output
+            .hover_position
+            .and_then(|point| text_overlay_at(document, point))
+            .is_some();
+
+    if response.clicked() && !clicked_existing_text {
         output.clicked = pointer_pos.and_then(|pos| transform.screen_to_image(pos));
     }
 
@@ -417,6 +505,44 @@ fn crop_interaction_at(screen_rect: Rect, point: Pos2) -> Option<CropInteraction
     None
 }
 
+fn text_overlay_at(
+    document: &Document,
+    point: ImagePoint,
+) -> Option<(usize, ImagePoint, ImageRect)> {
+    document
+        .overlays()
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, overlay)| match overlay {
+            OverlayObject::Text(text) => {
+                let bounds = overlay.bounds();
+                bounds
+                    .contains(point)
+                    .then_some((index, text.anchor, bounds))
+            }
+            _ => None,
+        })
+}
+
+fn apply_text_interaction(
+    interaction: TextInteractionState,
+    current: ImagePoint,
+    image_size: [u32; 2],
+) -> ImagePoint {
+    let dx = current.x - interaction.origin.x;
+    let dy = current.y - interaction.origin.y;
+    let width = interaction.bounds.width();
+    let height = interaction.bounds.height();
+    let max_x = (image_size[0] as f32 - width).max(0.0);
+    let max_y = (image_size[1] as f32 - height).max(0.0);
+
+    ImagePoint::new(
+        (interaction.initial_anchor.x + dx).clamp(0.0, max_x),
+        (interaction.initial_anchor.y + dy).clamp(0.0, max_y),
+    )
+}
+
 fn crop_cursor(interaction: CropInteractionKind) -> CursorIcon {
     match interaction {
         CropInteractionKind::Move => CursorIcon::Grab,
@@ -450,7 +576,8 @@ fn apply_crop_interaction(
             let height = interaction.initial_rect.height();
             let dx = current.x - interaction.origin.x;
             let dy = current.y - interaction.origin.y;
-            let min_x = (interaction.initial_rect.min.x + dx).clamp(0.0, (width_limit - width).max(0.0));
+            let min_x =
+                (interaction.initial_rect.min.x + dx).clamp(0.0, (width_limit - width).max(0.0));
             let min_y =
                 (interaction.initial_rect.min.y + dy).clamp(0.0, (height_limit - height).max(0.0));
 

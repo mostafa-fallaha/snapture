@@ -62,6 +62,14 @@ impl ImageRect {
         }
     }
 
+    pub fn contains(self, point: ImagePoint) -> bool {
+        let rect = self.normalized();
+        point.x >= rect.min.x
+            && point.x <= rect.max.x
+            && point.y >= rect.min.y
+            && point.y <= rect.max.y
+    }
+
     pub fn intersects(self, other: Self) -> bool {
         self.min.x < other.max.x
             && self.max.x > other.min.x

@@ -59,6 +59,16 @@ impl Document {
         }
     }
 
+    pub fn set_text_anchor(&mut self, overlay_index: usize, anchor: ImagePoint) -> bool {
+        match self.overlays.get_mut(overlay_index) {
+            Some(OverlayObject::Text(text)) => {
+                text.anchor = anchor;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn restore(
         &mut self,
         base_image: RgbaImage,
@@ -338,18 +348,12 @@ fn capsule_polygon_points(start: ImagePoint, end: ImagePoint, radius: f32) -> Ve
 
     for step in 0..=arc_steps {
         let angle = base_angle + PI * 0.5 + PI * step as f32 / arc_steps as f32;
-        push_unique_point(
-            &mut points,
-            point_on_circle(start, radius, angle),
-        );
+        push_unique_point(&mut points, point_on_circle(start, radius, angle));
     }
 
     for step in 0..=arc_steps {
         let angle = base_angle - PI * 0.5 + PI * step as f32 / arc_steps as f32;
-        push_unique_point(
-            &mut points,
-            point_on_circle(end, radius, angle),
-        );
+        push_unique_point(&mut points, point_on_circle(end, radius, angle));
     }
 
     if points.first() == points.last() {
@@ -365,10 +369,7 @@ fn circle_polygon_points(center: ImagePoint, radius: f32) -> Vec<Point<i32>> {
 
     for step in 0..steps {
         let angle = 2.0 * PI * step as f32 / steps as f32;
-        push_unique_point(
-            &mut points,
-            point_on_circle(center, radius, angle),
-        );
+        push_unique_point(&mut points, point_on_circle(center, radius, angle));
     }
 
     if points.first() == points.last() {
