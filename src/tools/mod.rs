@@ -18,6 +18,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
+    Select,
     Pen,
     Highlighter,
     Rectangle,
@@ -27,7 +28,8 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Select,
         Self::Pen,
         Self::Highlighter,
         Self::Rectangle,
@@ -38,6 +40,7 @@ impl ToolKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Select => "Select",
             Self::Pen => "Pen",
             Self::Highlighter => "Highlight",
             Self::Rectangle => "Rect",
@@ -91,6 +94,7 @@ impl DraftOverlay {
 
 pub fn begin_drag(tool: ToolKind, start: ImagePoint, style: StrokeStyle) -> Option<DraftOverlay> {
     match tool {
+        ToolKind::Select => None,
         ToolKind::Pen => Some(DraftOverlay::Pen(PenDraft::new(start, style))),
         ToolKind::Highlighter => Some(DraftOverlay::Highlighter(HighlighterDraft::new(
             start, style,

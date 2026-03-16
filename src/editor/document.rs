@@ -59,6 +59,16 @@ impl Document {
         }
     }
 
+    pub fn set_overlay(&mut self, overlay_index: usize, overlay: OverlayObject) -> bool {
+        match self.overlays.get_mut(overlay_index) {
+            Some(slot) => {
+                *slot = overlay;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn set_text_anchor(&mut self, overlay_index: usize, anchor: ImagePoint) -> bool {
         match self.overlays.get_mut(overlay_index) {
             Some(OverlayObject::Text(text)) => {

@@ -11,6 +11,7 @@
 - Draw rectangles
 - Draw arrows
 - Place text annotations
+- Select, move, and resize existing annotations
 - Select and commit a crop
 - Undo and redo annotation and crop actions
 - Save the final flattened image to PNG

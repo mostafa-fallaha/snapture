@@ -32,6 +32,7 @@ pub struct SnaptureApp {
     texture_revision: u64,
     active_tool: ToolKind,
     draft: Option<DraftOverlay>,
+    selected_overlay: Option<usize>,
     pending_crop: Option<ImageRect>,
     pending_text_anchor: Option<ImagePoint>,
     text_editor_should_focus: bool,
@@ -64,6 +65,7 @@ impl SnaptureApp {
             texture_revision: 0,
             active_tool: ToolKind::Pen,
             draft: None,
+            selected_overlay: None,
             pending_crop: None,
             pending_text_anchor: None,
             text_editor_should_focus: false,
@@ -117,6 +119,7 @@ impl SnaptureApp {
 
     fn stroke_style_for_tool(&self, tool: ToolKind) -> StrokeStyle {
         match tool {
+            ToolKind::Select => self.current_stroke_style(),
             ToolKind::Highlighter => self.current_highlighter_style(),
             ToolKind::Pen
             | ToolKind::Rectangle
@@ -136,6 +139,7 @@ impl SnaptureApp {
 
     fn clear_transient_state(&mut self) {
         self.draft = None;
+        self.selected_overlay = None;
         self.pending_crop = None;
         self.pending_text_anchor = None;
         self.text_editor_should_focus = false;
@@ -176,6 +180,9 @@ impl SnaptureApp {
 
     fn tool_status_message(tool: ToolKind) -> &'static str {
         match tool {
+            ToolKind::Select => {
+                "Select active. Click an object to select it, drag inside to move it, or drag a handle to resize it."
+            }
             ToolKind::Pen => "Pen active. Drag on the image to draw.",
             ToolKind::Highlighter => {
                 "Highlighter active. Drag on the image to lay down translucent strokes; increase thickness for broader highlights."
@@ -345,6 +352,7 @@ impl SnaptureApp {
 
     fn handle_canvas_output(&mut self, output: canvas::CanvasOutput, ctx: &Context) {
         match self.active_tool {
+            ToolKind::Select => self.handle_select_output(&output),
             ToolKind::Pen => self.handle_pen_output(&output, ctx),
             ToolKind::Highlighter => self.handle_highlighter_output(&output, ctx),
             ToolKind::Rectangle => self.handle_rectangle_output(&output, ctx),
@@ -361,6 +369,47 @@ impl SnaptureApp {
             ToolKind::Pen,
             "Pen stroke added. Drag again to keep drawing.",
         );
+    }
+
+    fn handle_select_output(&mut self, output: &canvas::CanvasOutput) {
+        if output.selection_changed {
+            self.selected_overlay = output.selected_overlay;
+            if self.selected_overlay.is_some() {
+                self.set_status(
+                    "Object selected. Drag inside to move it or use the handles to resize it.",
+                );
+            } else {
+                self.set_status(Self::tool_status_message(ToolKind::Select));
+            }
+        }
+
+        if output.object_transform_started.is_some() {
+            self.history.checkpoint(&self.document);
+            self.pending_text_anchor = None;
+            self.text_editor_should_focus = false;
+            self.set_status("Transforming selection...");
+        }
+
+        if let Some(transform) = &output.object_transform_current {
+            if self
+                .document
+                .set_overlay(transform.overlay_index, transform.overlay.clone())
+            {
+                self.selected_overlay = Some(transform.overlay_index);
+            }
+        }
+
+        if let Some(transform) = &output.object_transform_stopped {
+            if self
+                .document
+                .set_overlay(transform.overlay_index, transform.overlay.clone())
+            {
+                self.selected_overlay = Some(transform.overlay_index);
+                self.set_status(
+                    "Object updated. Drag inside to move it again or use the handles to resize it.",
+                );
+            }
+        }
     }
 
     fn handle_highlighter_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
@@ -558,6 +607,8 @@ impl eframe::App for SnaptureApp {
                 self.pending_crop,
                 self.active_tool == ToolKind::Text,
                 self.pending_text_anchor.is_none(),
+                self.active_tool == ToolKind::Select,
+                self.selected_overlay,
             );
             self.handle_canvas_output(output, ctx);
         });
