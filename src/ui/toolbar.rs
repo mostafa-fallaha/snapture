@@ -14,6 +14,8 @@ pub fn show(
     active_tool: ToolKind,
     color: &mut RgbaColor,
     stroke_thickness: &mut f32,
+    highlighter_thickness: &mut f32,
+    highlighter_alpha: &mut u8,
     text_size: &mut f32,
     save_path: &mut String,
     zoom: &mut f32,
@@ -45,11 +47,31 @@ pub fn show(
         *color = RgbaColor::from(egui_color);
     }
 
+    let (active_thickness, thickness_range) = if active_tool == ToolKind::Highlighter {
+        (highlighter_thickness, 10.0..=34.0)
+    } else {
+        (stroke_thickness, 1.0..=24.0)
+    };
+
     ui.add(
-        egui::Slider::new(stroke_thickness, 1.0..=24.0)
+        egui::Slider::new(active_thickness, thickness_range)
             .text("Thickness")
             .clamping(egui::SliderClamping::Always),
     );
+
+    if active_tool == ToolKind::Highlighter {
+        let mut transparency = 100.0 - (f32::from(*highlighter_alpha) / 255.0) * 100.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut transparency, 0.0..=100.0)
+                    .text("Transparency")
+                    .clamping(egui::SliderClamping::Always),
+            )
+            .changed()
+        {
+            *highlighter_alpha = ((100.0 - transparency) / 100.0 * 255.0).round() as u8;
+        }
+    }
 
     ui.separator();
     ui.label("Text");

@@ -7,6 +7,7 @@
 - Capture a screenshot through the screenshot portal
 - Open the captured image in an `egui` annotation editor
 - Draw freehand pen strokes
+- Draw translucent highlight strokes
 - Draw rectangles
 - Draw arrows
 - Place text annotations
@@ -46,6 +47,7 @@
     ├── tools
     │   ├── arrow.rs
     │   ├── crop.rs
+    │   ├── highlighter.rs
     │   ├── mod.rs
     │   ├── pen.rs
     │   ├── rect.rs

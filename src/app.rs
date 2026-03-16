@@ -17,6 +17,13 @@ use crate::{
     ui::{toolbar, topbar},
 };
 
+const HIGHLIGHTER_ALPHA: u8 = 112;
+const MIN_STROKE_THICKNESS: f32 = 1.0;
+const MAX_STROKE_THICKNESS: f32 = 24.0;
+const MIN_HIGHLIGHTER_THICKNESS: f32 = 10.0;
+const MAX_HIGHLIGHTER_THICKNESS: f32 = 34.0;
+const HIGHLIGHTER_DEFAULT_THICKNESS: f32 = 16.0;
+
 pub struct SnaptureApp {
     config: AppConfig,
     document: Document,
@@ -30,6 +37,8 @@ pub struct SnaptureApp {
     text_editor_should_focus: bool,
     stroke_color: RgbaColor,
     stroke_thickness: f32,
+    highlighter_thickness: f32,
+    highlighter_alpha: u8,
     text_size: f32,
     text_buffer: String,
     save_path: String,
@@ -60,6 +69,8 @@ impl SnaptureApp {
             text_editor_should_focus: false,
             stroke_color: RgbaColor::default(),
             stroke_thickness: 4.0,
+            highlighter_thickness: HIGHLIGHTER_DEFAULT_THICKNESS,
+            highlighter_alpha: HIGHLIGHTER_ALPHA,
             text_size: 28.0,
             text_buffer: String::new(),
             save_path,
@@ -92,6 +103,29 @@ impl SnaptureApp {
         StrokeStyle::new(self.stroke_color, self.stroke_thickness)
     }
 
+    fn current_highlighter_style(&self) -> StrokeStyle {
+        StrokeStyle::new(
+            RgbaColor::from_rgba(
+                self.stroke_color.r,
+                self.stroke_color.g,
+                self.stroke_color.b,
+                self.highlighter_alpha,
+            ),
+            self.highlighter_thickness,
+        )
+    }
+
+    fn stroke_style_for_tool(&self, tool: ToolKind) -> StrokeStyle {
+        match tool {
+            ToolKind::Highlighter => self.current_highlighter_style(),
+            ToolKind::Pen
+            | ToolKind::Rectangle
+            | ToolKind::Arrow
+            | ToolKind::Text
+            | ToolKind::Crop => self.current_stroke_style(),
+        }
+    }
+
     fn current_text_style(&self) -> TextStyle {
         TextStyle::new(self.stroke_color, self.text_size)
     }
@@ -121,6 +155,16 @@ impl SnaptureApp {
             self.clear_transient_state();
         }
 
+        if tool == ToolKind::Highlighter {
+            self.highlighter_thickness = self
+                .highlighter_thickness
+                .clamp(MIN_HIGHLIGHTER_THICKNESS, MAX_HIGHLIGHTER_THICKNESS);
+        } else {
+            self.stroke_thickness = self
+                .stroke_thickness
+                .clamp(MIN_STROKE_THICKNESS, MAX_STROKE_THICKNESS);
+        }
+
         if tool == ToolKind::Crop {
             self.draft = None;
             self.pending_text_anchor = None;
@@ -133,6 +177,9 @@ impl SnaptureApp {
     fn tool_status_message(tool: ToolKind) -> &'static str {
         match tool {
             ToolKind::Pen => "Pen active. Drag on the image to draw.",
+            ToolKind::Highlighter => {
+                "Highlighter active. Drag on the image to lay down translucent strokes; increase thickness for broader highlights."
+            }
             ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
             ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
             ToolKind::Text => {
@@ -299,6 +346,7 @@ impl SnaptureApp {
     fn handle_canvas_output(&mut self, output: canvas::CanvasOutput, ctx: &Context) {
         match self.active_tool {
             ToolKind::Pen => self.handle_pen_output(&output, ctx),
+            ToolKind::Highlighter => self.handle_highlighter_output(&output, ctx),
             ToolKind::Rectangle => self.handle_rectangle_output(&output, ctx),
             ToolKind::Arrow => self.handle_arrow_output(&output, ctx),
             ToolKind::Text => self.handle_text_output(&output),
@@ -312,6 +360,15 @@ impl SnaptureApp {
             ctx,
             ToolKind::Pen,
             "Pen stroke added. Drag again to keep drawing.",
+        );
+    }
+
+    fn handle_highlighter_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        self.handle_shape_output(
+            output,
+            ctx,
+            ToolKind::Highlighter,
+            "Highlight added. Drag again to mark another area.",
         );
     }
 
@@ -341,7 +398,7 @@ impl SnaptureApp {
         commit_status: &'static str,
     ) {
         if let Some(start) = output.drag_started {
-            self.draft = tools::begin_drag(tool, start, self.current_stroke_style());
+            self.draft = tools::begin_drag(tool, start, self.stroke_style_for_tool(tool));
         }
 
         if let Some(current) = output.drag_current {
@@ -467,6 +524,8 @@ impl eframe::App for SnaptureApp {
                     self.active_tool,
                     &mut self.stroke_color,
                     &mut self.stroke_thickness,
+                    &mut self.highlighter_thickness,
+                    &mut self.highlighter_alpha,
                     &mut self.text_size,
                     &mut self.save_path,
                     &mut self.canvas_state.zoom,
