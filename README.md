@@ -16,6 +16,7 @@
 - Undo and redo annotation and crop actions
 - Save the final flattened image to PNG
 - Copy the final flattened image to the clipboard
+- Use `Ctrl+S` to save and `Ctrl+C` to copy the image
 - Keep the base screenshot separate from overlays until export
 
 ## Project Layout

@@ -521,9 +521,10 @@ impl SnaptureApp {
         let redo_alt_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Z);
         let save_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::S);
         let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
+        let global_copy_shortcut_enabled = !ctx.wants_keyboard_input();
         let crop_shortcuts_enabled = self.active_tool == ToolKind::Crop
             && self.pending_crop.is_some()
-            && !ctx.wants_keyboard_input();
+            && global_copy_shortcut_enabled;
 
         if ctx.input_mut(|input| input.consume_shortcut(&undo_shortcut)) {
             self.undo(ctx);
@@ -536,7 +537,18 @@ impl SnaptureApp {
         if ctx.input_mut(|input| input.consume_shortcut(&save_shortcut)) {
             self.save_document();
         }
-        if ctx.input_mut(|input| input.consume_shortcut(&copy_shortcut)) {
+        if global_copy_shortcut_enabled
+            && ctx.input_mut(|input| {
+                let mut consumed_copy_event = false;
+                input.events.retain(|event| {
+                    let is_copy_event = matches!(event, egui::Event::Copy);
+                    consumed_copy_event |= is_copy_event;
+                    !is_copy_event
+                });
+
+                input.consume_shortcut(&copy_shortcut) || consumed_copy_event
+            })
+        {
             self.copy_document();
         }
         if crop_shortcuts_enabled

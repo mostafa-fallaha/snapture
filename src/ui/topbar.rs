@@ -13,11 +13,11 @@ pub fn show(ui: &mut egui::Ui, can_undo: bool, can_redo: bool, status: &str) -> 
     let mut output = TopbarOutput::default();
 
     ui.horizontal_wrapped(|ui| {
-        if ui.button("Save PNG...").clicked() {
+        if ui.button("Save PNG... (Ctrl+S)").clicked() {
             output.save_clicked = true;
         }
 
-        if ui.button("Copy Image").clicked() {
+        if ui.button("Copy Image (Ctrl+C)").clicked() {
             output.copy_clicked = true;
         }
 
