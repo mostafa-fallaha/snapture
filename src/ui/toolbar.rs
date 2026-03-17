@@ -85,11 +85,11 @@ pub fn show(
         ui.separator();
         ui.label("Crop");
 
-        if ui.button("Commit Crop").clicked() {
+        if ui.button("Commit Crop (Enter)").clicked() {
             output.commit_crop = true;
         }
 
-        if ui.button("Cancel Crop").clicked() {
+        if ui.button("Cancel Crop (Esc)").clicked() {
             output.cancel_crop = true;
         }
     }

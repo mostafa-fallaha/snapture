@@ -193,7 +193,7 @@ impl SnaptureApp {
                 "Text active. Click the image to place a text anchor and type in the floating dialog, or drag existing text to reposition it."
             }
             ToolKind::Crop => {
-                "Crop active. Resize or move the crop box, then commit or cancel it in the toolbar."
+                "Crop active. Resize or move the crop box, then press Enter to commit or Esc to cancel."
             }
         }
     }
@@ -243,6 +243,10 @@ impl SnaptureApp {
             }
             Err(error) => self.set_status(format!("Crop failed: {error}")),
         }
+    }
+
+    fn cancel_crop(&mut self) {
+        self.activate_tool(ToolKind::Select);
     }
 
     fn undo(&mut self, ctx: &Context) {
@@ -471,7 +475,7 @@ impl SnaptureApp {
         if let Some(crop_rect) = output.crop_rect {
             self.pending_crop = Some(crop_rect);
             self.set_status(
-                "Crop box updated. Commit it or cancel it in the toolbar when it looks right.",
+                "Crop box updated. Press Enter to commit or Esc to cancel.",
             );
         }
     }
@@ -517,6 +521,9 @@ impl SnaptureApp {
         let redo_alt_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Z);
         let save_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::S);
         let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
+        let crop_shortcuts_enabled = self.active_tool == ToolKind::Crop
+            && self.pending_crop.is_some()
+            && !ctx.wants_keyboard_input();
 
         if ctx.input_mut(|input| input.consume_shortcut(&undo_shortcut)) {
             self.undo(ctx);
@@ -531,6 +538,16 @@ impl SnaptureApp {
         }
         if ctx.input_mut(|input| input.consume_shortcut(&copy_shortcut)) {
             self.copy_document();
+        }
+        if crop_shortcuts_enabled
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter))
+        {
+            self.commit_crop(ctx);
+        }
+        if crop_shortcuts_enabled
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.cancel_crop();
         }
     }
 }
@@ -590,8 +607,7 @@ impl eframe::App for SnaptureApp {
                     self.commit_crop(ctx);
                 }
                 if output.cancel_crop {
-                    self.pending_crop = None;
-                    self.set_status(Self::tool_status_message(ToolKind::Crop));
+                    self.cancel_crop();
                 }
             });
 
