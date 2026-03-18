@@ -247,6 +247,18 @@ impl SnaptureApp {
         self.set_status(status);
     }
 
+    fn delete_selected_overlay(&mut self) {
+        let Some(overlay_index) = self.selected_overlay else {
+            return;
+        };
+
+        self.history.checkpoint(&self.document);
+        if self.document.remove_overlay(overlay_index) {
+            self.selected_overlay = None;
+            self.set_status("Selected object deleted.");
+        }
+    }
+
     fn commit_crop(&mut self, ctx: &Context) {
         let Some(selection) = self.pending_crop.take() else {
             return;
@@ -752,11 +764,15 @@ impl eframe::App for SnaptureApp {
                     &mut self.canvas_state.zoom,
                     self.config.min_zoom,
                     self.config.max_zoom,
+                    self.selected_overlay.is_some(),
                     self.pending_crop.is_some(),
                 );
 
                 if let Some(tool) = output.tool_change {
                     self.activate_tool(tool);
+                }
+                if output.delete_selected {
+                    self.delete_selected_overlay();
                 }
                 if output.commit_crop {
                     self.commit_crop(ctx);

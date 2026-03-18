@@ -69,6 +69,15 @@ impl Document {
         }
     }
 
+    pub fn remove_overlay(&mut self, overlay_index: usize) -> bool {
+        if overlay_index >= self.overlays.len() {
+            return false;
+        }
+
+        self.overlays.remove(overlay_index);
+        true
+    }
+
     pub fn set_text_anchor(&mut self, overlay_index: usize, anchor: ImagePoint) -> bool {
         match self.overlays.get_mut(overlay_index) {
             Some(OverlayObject::Text(text)) => {

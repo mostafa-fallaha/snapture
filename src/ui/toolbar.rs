@@ -5,6 +5,7 @@ use crate::{model::types::RgbaColor, tools::ToolKind};
 #[derive(Default)]
 pub struct ToolbarOutput {
     pub tool_change: Option<ToolKind>,
+    pub delete_selected: bool,
     pub commit_crop: bool,
     pub cancel_crop: bool,
 }
@@ -21,6 +22,7 @@ pub fn show(
     zoom: &mut f32,
     min_zoom: f32,
     max_zoom: f32,
+    has_selected_overlay: bool,
     has_pending_crop: bool,
 ) -> ToolbarOutput {
     let mut output = ToolbarOutput::default();
@@ -80,6 +82,13 @@ pub fn show(
             .text("Size")
             .clamping(egui::SliderClamping::Always),
     );
+
+    if active_tool == ToolKind::Select && has_selected_overlay {
+        ui.separator();
+        if ui.button("Delete Selected").clicked() {
+            output.delete_selected = true;
+        }
+    }
 
     if has_pending_crop {
         ui.separator();
