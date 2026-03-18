@@ -91,20 +91,8 @@ impl Document {
     }
 
     pub fn crop_to(&mut self, selection: ImageRect) -> AppResult<()> {
-        let width = self.base_image.width() as f32;
-        let height = self.base_image.height() as f32;
-        let selection = selection.clamp_to_bounds(width, height);
-
-        if selection.is_empty() {
-            return Err(SnaptureError::Message("crop selection is empty".into()));
-        }
-
-        let left = selection.min.x.floor() as u32;
-        let top = selection.min.y.floor() as u32;
-        let crop_width = selection.width().ceil().max(1.0) as u32;
-        let crop_height = selection.height().ceil().max(1.0) as u32;
-        let crop_width = crop_width.min(self.base_image.width().saturating_sub(left));
-        let crop_height = crop_height.min(self.base_image.height().saturating_sub(top));
+        let (selection, left, top, crop_width, crop_height) =
+            self.selection_to_crop_bounds(selection)?;
 
         self.base_image =
             imageops::crop_imm(&self.base_image, left, top, crop_width, crop_height).to_image();
@@ -116,6 +104,15 @@ impl Document {
             .collect();
 
         Ok(())
+    }
+
+    pub fn base_image_region(&self, selection: Option<ImageRect>) -> AppResult<RgbaImage> {
+        let Some(selection) = selection else {
+            return Ok(self.base_image.clone());
+        };
+
+        let (_, left, top, crop_width, crop_height) = self.selection_to_crop_bounds(selection)?;
+        Ok(imageops::crop_imm(&self.base_image, left, top, crop_width, crop_height).to_image())
     }
 
     pub fn render_flattened(&self) -> AppResult<RgbaImage> {
@@ -179,6 +176,28 @@ impl Document {
         let image = self.render_flattened()?;
         image.save(path)?;
         Ok(())
+    }
+
+    fn selection_to_crop_bounds(
+        &self,
+        selection: ImageRect,
+    ) -> AppResult<(ImageRect, u32, u32, u32, u32)> {
+        let width = self.base_image.width() as f32;
+        let height = self.base_image.height() as f32;
+        let selection = selection.clamp_to_bounds(width, height);
+
+        if selection.is_empty() {
+            return Err(SnaptureError::Message("crop selection is empty".into()));
+        }
+
+        let left = selection.min.x.floor() as u32;
+        let top = selection.min.y.floor() as u32;
+        let crop_width = selection.width().ceil().max(1.0) as u32;
+        let crop_height = selection.height().ceil().max(1.0) as u32;
+        let crop_width = crop_width.min(self.base_image.width().saturating_sub(left));
+        let crop_height = crop_height.min(self.base_image.height().saturating_sub(top));
+
+        Ok((selection, left, top, crop_width, crop_height))
     }
 }
 

@@ -1,4 +1,9 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
+    time::Duration,
+};
 
 use eframe::egui::{
     self, CentralPanel, Context, Key, KeyboardShortcut, Modifiers, SidePanel, TopBottomPanel,
@@ -12,7 +17,7 @@ use crate::{
         overlay::{CropOverlay, OverlayObject},
         types::{ImagePoint, ImageRect, RgbaColor, StrokeStyle, TextStyle},
     },
-    services::{clipboard, save},
+    services::{clipboard, ocr, save},
     tools::{self, DraftOverlay, ToolKind},
     ui::{toolbar, topbar},
 };
@@ -23,6 +28,12 @@ const MAX_STROKE_THICKNESS: f32 = 24.0;
 const MIN_HIGHLIGHTER_THICKNESS: f32 = 10.0;
 const MAX_HIGHLIGHTER_THICKNESS: f32 = 34.0;
 const HIGHLIGHTER_DEFAULT_THICKNESS: f32 = 16.0;
+const OCR_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+struct PendingTextExtraction {
+    receiver: Receiver<Result<String, String>>,
+    source_label: &'static str,
+}
 
 pub struct SnaptureApp {
     config: AppConfig,
@@ -42,6 +53,10 @@ pub struct SnaptureApp {
     highlighter_alpha: u8,
     text_size: f32,
     text_buffer: String,
+    extracted_text: String,
+    extracted_text_source: &'static str,
+    extracted_text_window_open: bool,
+    pending_text_extraction: Option<PendingTextExtraction>,
     save_path: String,
     canvas_state: CanvasState,
     status: String,
@@ -75,6 +90,10 @@ impl SnaptureApp {
             highlighter_alpha: HIGHLIGHTER_ALPHA,
             text_size: 28.0,
             text_buffer: String::new(),
+            extracted_text: String::new(),
+            extracted_text_source: "screenshot",
+            extracted_text_window_open: false,
+            pending_text_extraction: None,
             save_path,
             canvas_state: CanvasState::default(),
             status: format!(
@@ -294,6 +313,123 @@ impl SnaptureApp {
         }
     }
 
+    fn start_text_extraction(&mut self) {
+        if self.pending_text_extraction.is_some() {
+            self.set_status("Text extraction is already running.");
+            return;
+        }
+
+        let source_label = if self.pending_crop.is_some() {
+            "crop selection"
+        } else {
+            "screenshot"
+        };
+        let image = match self.document.base_image_region(self.pending_crop) {
+            Ok(image) => image,
+            Err(error) => {
+                self.set_status(format!("Text extraction failed: {error}"));
+                return;
+            }
+        };
+
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = ocr::extract_text(image).map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+
+        self.pending_text_extraction = Some(PendingTextExtraction {
+            receiver,
+            source_label,
+        });
+        self.set_status(format!("Extracting text from the {source_label}..."));
+    }
+
+    fn poll_text_extraction(&mut self) {
+        let Some(pending) = self.pending_text_extraction.take() else {
+            return;
+        };
+
+        match pending.receiver.try_recv() {
+            Ok(Ok(text)) => {
+                let non_empty = !text.trim().is_empty();
+                let source_label = pending.source_label;
+
+                self.extracted_text = text;
+                self.extracted_text_source = source_label;
+                self.extracted_text_window_open = true;
+
+                if non_empty {
+                    let line_count = self.extracted_text.lines().count();
+                    let line_suffix = if line_count == 1 { "" } else { "s" };
+                    self.set_status(format!(
+                        "Extracted {line_count} line{line_suffix} from the {source_label}."
+                    ));
+                } else {
+                    self.set_status(format!("No text detected in the {source_label}."));
+                }
+            }
+            Ok(Err(error)) => {
+                self.set_status(format!(
+                    "Text extraction from the {} failed: {error}",
+                    pending.source_label
+                ));
+            }
+            Err(TryRecvError::Empty) => {
+                self.pending_text_extraction = Some(pending);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.set_status("Text extraction worker stopped unexpectedly.");
+            }
+        }
+    }
+
+    fn show_extracted_text_window(&mut self, ctx: &Context) {
+        if !self.extracted_text_window_open {
+            return;
+        }
+
+        let mut window_open = self.extracted_text_window_open;
+        let mut copy_clicked = false;
+
+        egui::Window::new("Extracted Text")
+            .default_width(460.0)
+            .anchor(egui::Align2::RIGHT_TOP, [-16.0, 72.0])
+            .open(&mut window_open)
+            .show(ctx, |ui| {
+                ui.label(format!("Source: {}", self.extracted_text_source));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !self.extracted_text.trim().is_empty(),
+                            egui::Button::new("Copy Text"),
+                        )
+                        .clicked()
+                    {
+                        copy_clicked = true;
+                    }
+                });
+
+                if self.extracted_text.trim().is_empty() {
+                    ui.label("No text was detected in the selected image area.");
+                }
+
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.extracted_text)
+                        .desired_rows(14)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Extracted text will appear here"),
+                );
+            });
+
+        self.extracted_text_window_open = window_open;
+
+        if copy_clicked {
+            ctx.copy_text(self.extracted_text.clone());
+            self.set_status("Copied extracted text to clipboard.");
+        }
+    }
+
     fn show_text_editor(&mut self, ctx: &Context) {
         let Some(anchor) = self.pending_text_anchor else {
             return;
@@ -474,9 +610,7 @@ impl SnaptureApp {
     fn handle_crop_output(&mut self, output: &canvas::CanvasOutput) {
         if let Some(crop_rect) = output.crop_rect {
             self.pending_crop = Some(crop_rect);
-            self.set_status(
-                "Crop box updated. Press Enter to commit or Esc to cancel.",
-            );
+            self.set_status("Crop box updated. Press Enter to commit or Esc to cancel.");
         }
     }
 
@@ -566,13 +700,19 @@ impl SnaptureApp {
 
 impl eframe::App for SnaptureApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.poll_text_extraction();
         self.handle_shortcuts(ctx);
+
+        if self.pending_text_extraction.is_some() {
+            ctx.request_repaint_after(OCR_POLL_INTERVAL);
+        }
 
         TopBottomPanel::top("topbar").show(ctx, |ui| {
             let output = topbar::show(
                 ui,
                 self.history.can_undo(),
                 self.history.can_redo(),
+                self.pending_text_extraction.is_some(),
                 &self.status,
             );
 
@@ -581,6 +721,9 @@ impl eframe::App for SnaptureApp {
             }
             if output.copy_clicked {
                 self.copy_document();
+            }
+            if output.extract_text_clicked {
+                self.start_text_extraction();
             }
             if output.undo_clicked {
                 self.undo(ctx);
@@ -642,5 +785,6 @@ impl eframe::App for SnaptureApp {
         });
 
         self.show_text_editor(ctx);
+        self.show_extracted_text_window(ctx);
     }
 }

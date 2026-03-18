@@ -3,6 +3,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum SnaptureError {
     #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Image(#[from] image::ImageError),
