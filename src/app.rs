@@ -15,7 +15,7 @@ use crate::{
     config::AppConfig,
     editor::{CanvasState, Document, HistoryManager, canvas},
     model::{
-        overlay::{CropOverlay, OverlayObject},
+        overlay::{CropOverlay, OverlayObject, TextAlignment},
         types::{ImagePoint, ImageRect, RgbaColor, StrokeStyle, TextStyle},
     },
     services::{clipboard, ocr, save},
@@ -56,6 +56,7 @@ pub struct SnaptureApp {
     selected_overlay: Option<usize>,
     pending_crop: Option<ImageRect>,
     pending_text_anchor: Option<ImagePoint>,
+    pending_text_alignment: TextAlignment,
     text_editor_should_focus: bool,
     stroke_color: RgbaColor,
     stroke_thickness: f32,
@@ -96,6 +97,7 @@ impl SnaptureApp {
             selected_overlay: None,
             pending_crop: None,
             pending_text_anchor: None,
+            pending_text_alignment: TextAlignment::Left,
             text_editor_should_focus: false,
             stroke_color: RgbaColor::default(),
             stroke_thickness: 4.0,
@@ -175,6 +177,7 @@ impl SnaptureApp {
         self.selected_overlay = None;
         self.pending_crop = None;
         self.pending_text_anchor = None;
+        self.pending_text_alignment = TextAlignment::Left;
         self.text_editor_should_focus = false;
     }
 
@@ -223,7 +226,7 @@ impl SnaptureApp {
             ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
             ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
             ToolKind::Text => {
-                "Text active. Click the image to place a text anchor and type in the floating dialog, or drag existing text to reposition it."
+                "Text active. Click the image to place a text anchor, type directly on the image, press Enter to apply, or press Shift+Enter for a new line."
             }
             ToolKind::Crop => {
                 "Crop active. Resize or move the crop box, then press Enter to commit or Esc to cancel."
@@ -240,16 +243,6 @@ impl SnaptureApp {
 
         if let Some(crop) = self.pending_crop {
             overlays.push(OverlayObject::Crop(CropOverlay { rect: crop }));
-        }
-
-        if let Some(anchor) = self.pending_text_anchor {
-            if let Some(overlay) = tools::text::build_text_overlay(
-                anchor,
-                self.text_buffer.clone(),
-                self.current_text_style(),
-            ) {
-                overlays.push(overlay);
-            }
         }
 
         overlays
@@ -292,6 +285,35 @@ impl SnaptureApp {
 
     fn cancel_crop(&mut self) {
         self.activate_tool(ToolKind::Select);
+    }
+
+    fn commit_pending_text(&mut self) {
+        let Some(anchor) = self.pending_text_anchor else {
+            return;
+        };
+
+        if let Some(overlay) = tools::text::build_text_overlay(
+            anchor,
+            self.text_buffer.clone(),
+            self.current_text_style(),
+            self.pending_text_alignment.clone(),
+        ) {
+            self.commit_overlay(
+                overlay,
+                "Text added. Click the image to place another text annotation, or drag existing text to reposition it.",
+            );
+            self.pending_text_anchor = None;
+            self.text_editor_should_focus = false;
+            self.text_buffer.clear();
+        }
+    }
+
+    fn cancel_pending_text(&mut self) {
+        self.pending_text_anchor = None;
+        self.pending_text_alignment = TextAlignment::Left;
+        self.text_editor_should_focus = false;
+        self.text_buffer.clear();
+        self.set_status(Self::tool_status_message(ToolKind::Text));
     }
 
     fn undo(&mut self, ctx: &Context) {
@@ -492,80 +514,6 @@ impl SnaptureApp {
         }
     }
 
-    fn show_text_editor(&mut self, ctx: &Context) {
-        let Some(anchor) = self.pending_text_anchor else {
-            return;
-        };
-        let should_focus = self.text_editor_should_focus;
-
-        egui::Window::new("Text Annotation")
-            .collapsible(false)
-            .resizable(false)
-            .default_width(320.0)
-            .anchor(egui::Align2::RIGHT_TOP, [-16.0, 72.0])
-            .frame(theme::floating_frame())
-            .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(format!("Anchor: {:.0}, {:.0}", anchor.x, anchor.y))
-                        .size(11.5)
-                        .color(theme::TEXT_MUTED),
-                );
-                let response = ui.add(
-                    egui::TextEdit::multiline(&mut self.text_buffer)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Type text and press Add Text"),
-                );
-                if should_focus {
-                    response.request_focus();
-                }
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !self.text_buffer.trim().is_empty(),
-                            Button::new(RichText::new("Add Text").strong())
-                                .fill(theme::ACCENT)
-                                .stroke(Stroke::new(1.0, theme::ACCENT_HOVER))
-                                .corner_radius(CornerRadius::same(8)),
-                        )
-                        .clicked()
-                    {
-                        if let Some(overlay) = tools::text::build_text_overlay(
-                            anchor,
-                            self.text_buffer.clone(),
-                            self.current_text_style(),
-                        ) {
-                            self.commit_overlay(
-                                overlay,
-                                "Text added. Click the image to place another text annotation, or drag existing text to reposition it.",
-                            );
-                            self.pending_text_anchor = None;
-                            self.text_editor_should_focus = false;
-                            self.text_buffer.clear();
-                        }
-                    }
-
-                    if ui
-                        .add(
-                            Button::new(RichText::new("Cancel"))
-                                .corner_radius(CornerRadius::same(8)),
-                        )
-                        .clicked()
-                    {
-                        self.pending_text_anchor = None;
-                        self.text_editor_should_focus = false;
-                        self.text_buffer.clear();
-                        self.set_status(Self::tool_status_message(ToolKind::Text));
-                    }
-                });
-            });
-
-        if should_focus {
-            self.text_editor_should_focus = false;
-        }
-    }
-
     fn handle_canvas_output(&mut self, output: canvas::CanvasOutput, ctx: &Context) {
         match self.active_tool {
             ToolKind::Select => self.handle_select_output(&output),
@@ -573,7 +521,7 @@ impl SnaptureApp {
             ToolKind::Highlighter => self.handle_highlighter_output(&output, ctx),
             ToolKind::Rectangle => self.handle_rectangle_output(&output, ctx),
             ToolKind::Arrow => self.handle_arrow_output(&output, ctx),
-            ToolKind::Text => self.handle_text_output(&output),
+            ToolKind::Text => self.handle_text_output(&output, ctx),
             ToolKind::Crop => self.handle_crop_output(&output),
         }
     }
@@ -690,10 +638,23 @@ impl SnaptureApp {
         }
     }
 
-    fn handle_text_output(&mut self, output: &canvas::CanvasOutput) {
+    fn handle_text_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        if output.text_submit_requested {
+            self.commit_pending_text();
+            ctx.request_repaint();
+            return;
+        }
+
+        if output.text_cancel_requested {
+            self.cancel_pending_text();
+            ctx.request_repaint();
+            return;
+        }
+
         if output.text_drag_started.is_some() {
             self.history.checkpoint(&self.document);
             self.pending_text_anchor = None;
+            self.pending_text_alignment = TextAlignment::Left;
             self.text_editor_should_focus = false;
             self.set_status("Moving text annotation...");
         }
@@ -720,8 +681,12 @@ impl SnaptureApp {
         if let Some(position) = output.clicked {
             self.text_buffer.clear();
             self.pending_text_anchor = Some(position);
+            self.pending_text_alignment = TextAlignment::Left;
             self.text_editor_should_focus = true;
-            self.set_status("Text anchor placed. Enter text in the floating editor.");
+            self.set_status(
+                "Text anchor placed. Type directly on the image. Press Enter to apply or Shift+Enter for a new line.",
+            );
+            ctx.request_repaint();
         }
     }
 
@@ -735,6 +700,42 @@ impl SnaptureApp {
         let crop_shortcuts_enabled = self.active_tool == ToolKind::Crop
             && self.pending_crop.is_some()
             && global_copy_shortcut_enabled;
+        let text_shortcuts_enabled =
+            self.active_tool == ToolKind::Text && self.pending_text_anchor.is_some();
+        let mut commit_text_requested = false;
+        let mut cancel_text_requested = false;
+
+        if text_shortcuts_enabled {
+            ctx.input_mut(|input| {
+                input.events.retain(|event| match event {
+                    egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if !modifiers.alt
+                        && !modifiers.ctrl
+                        && !modifiers.shift
+                        && !modifiers.command
+                        && !modifiers.mac_cmd =>
+                    {
+                        commit_text_requested = true;
+                        false
+                    }
+                    egui::Event::Key {
+                        key: Key::Escape,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    } => {
+                        cancel_text_requested = true;
+                        false
+                    }
+                    _ => true,
+                });
+            });
+        }
 
         if ctx.input_mut(|input| input.consume_shortcut(&undo_shortcut)) {
             self.undo(ctx);
@@ -770,6 +771,14 @@ impl SnaptureApp {
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
         {
             self.cancel_crop();
+        }
+        if text_shortcuts_enabled && commit_text_requested {
+            self.commit_pending_text();
+            ctx.request_repaint();
+        }
+        if text_shortcuts_enabled && cancel_text_requested {
+            self.cancel_pending_text();
+            ctx.request_repaint();
         }
     }
 }
@@ -855,6 +864,7 @@ impl eframe::App for SnaptureApp {
             .frame(theme::central_frame())
             .show(ctx, |ui| {
                 let preview_overlays = self.preview_overlays();
+                let pending_text_style = self.current_text_style();
                 let output = canvas::show(
                     ui,
                     &self.document,
@@ -864,6 +874,11 @@ impl eframe::App for SnaptureApp {
                     self.active_tool == ToolKind::Crop,
                     self.pending_crop,
                     self.active_tool == ToolKind::Text,
+                    self.pending_text_anchor,
+                    self.pending_text_alignment.clone(),
+                    pending_text_style,
+                    &mut self.text_buffer,
+                    &mut self.text_editor_should_focus,
                     self.pending_text_anchor.is_none(),
                     self.active_tool == ToolKind::Select,
                     self.selected_overlay,
@@ -871,7 +886,6 @@ impl eframe::App for SnaptureApp {
                 self.handle_canvas_output(output, ctx);
             });
 
-        self.show_text_editor(ctx);
         self.show_extracted_text_window(ctx);
     }
 }

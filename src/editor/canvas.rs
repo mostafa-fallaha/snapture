@@ -6,8 +6,8 @@ use eframe::egui::{
 use crate::{
     editor::document::Document,
     model::{
-        overlay::{CropOverlay, OverlayObject, TextOverlay},
-        types::{ImagePoint, ImageRect},
+        overlay::{CropOverlay, OverlayObject, TextAlignment, TextOverlay},
+        types::{ImagePoint, ImageRect, TextStyle},
     },
     ui::theme,
 };
@@ -42,6 +42,8 @@ pub struct CanvasOutput {
     pub text_drag_started: Option<usize>,
     pub text_drag_current: Option<TextDragOutput>,
     pub text_drag_stopped: Option<TextDragOutput>,
+    pub text_submit_requested: bool,
+    pub text_cancel_requested: bool,
     pub selection_changed: bool,
     pub selected_overlay: Option<usize>,
     pub object_transform_started: Option<usize>,
@@ -149,6 +151,11 @@ pub fn show(
     crop_tool_active: bool,
     pending_crop: Option<ImageRect>,
     text_tool_active: bool,
+    pending_text_anchor: Option<ImagePoint>,
+    _pending_text_alignment: TextAlignment,
+    pending_text_style: TextStyle,
+    text_buffer: &mut String,
+    text_editor_should_focus: &mut bool,
     text_drag_enabled: bool,
     selection_tool_active: bool,
     selected_overlay: Option<usize>,
@@ -212,6 +219,21 @@ pub fn show(
 
     for overlay in preview_overlays {
         paint_overlay(&painter, transform, overlay, true);
+    }
+
+    if let Some(anchor) = pending_text_anchor {
+        if text_buffer.is_empty() {
+            paint_pending_text_anchor(&painter, transform.image_to_screen(anchor));
+        }
+        show_inline_text_editor(
+            ui,
+            transform,
+            anchor,
+            pending_text_style,
+            text_buffer,
+            text_editor_should_focus,
+            &mut output,
+        );
     }
 
     let pointer_pos = response
@@ -489,10 +511,12 @@ pub fn show(
         None
     };
 
-    if response.clicked() && selection_tool_active {
+    let canvas_clicked = response.clicked() && !ui.ctx().is_pointer_over_area();
+
+    if canvas_clicked && selection_tool_active {
         output.selection_changed = true;
         output.selected_overlay = clicked_overlay;
-    } else if response.clicked() && !clicked_existing_text {
+    } else if canvas_clicked && !clicked_existing_text {
         output.clicked = pointer_pos.and_then(|pos| transform.screen_to_image(pos));
     }
 
@@ -572,11 +596,10 @@ fn paint_overlay(
             ));
         }
         OverlayObject::Text(text) => {
-            painter.text(
+            let galley = layout_wrapped_text(painter, transform, text);
+            painter.galley(
                 transform.image_to_screen(text.anchor),
-                Align2::LEFT_TOP,
-                &text.text,
-                FontId::proportional((text.style.size * transform.scale).max(10.0)),
+                galley,
                 text.style.color.to_egui(),
             );
         }
@@ -604,6 +627,80 @@ fn paint_selection_overlay(painter: &egui::Painter, transform: ScreenTransform, 
     for center in crop_handle_positions(screen_rect) {
         paint_handle(painter, center, border_color);
     }
+}
+
+fn paint_pending_text_anchor(painter: &egui::Painter, anchor: Pos2) {
+    let color = theme::ACCENT_HOVER;
+    painter.circle_filled(
+        anchor,
+        5.0,
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 48),
+    );
+    painter.circle_stroke(anchor, 5.0, Stroke::new(1.5, color));
+    painter.line_segment(
+        [anchor + vec2(-8.0, 0.0), anchor + vec2(8.0, 0.0)],
+        Stroke::new(1.0, color),
+    );
+    painter.line_segment(
+        [anchor + vec2(0.0, -8.0), anchor + vec2(0.0, 8.0)],
+        Stroke::new(1.0, color),
+    );
+}
+
+fn show_inline_text_editor(
+    ui: &mut egui::Ui,
+    transform: ScreenTransform,
+    anchor: ImagePoint,
+    text_style: TextStyle,
+    text_buffer: &mut String,
+    text_editor_should_focus: &mut bool,
+    output: &mut CanvasOutput,
+) {
+    let font_size = (text_style.size * transform.scale).max(10.0);
+    let anchor_screen = transform.image_to_screen(anchor);
+    let row_count = text_buffer.lines().count().max(1);
+    let desired_width = available_text_wrap_width_screen(transform, anchor);
+
+    egui::Area::new(egui::Id::new("inline-text-editor"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(anchor_screen)
+        .show(ui.ctx(), |ui| {
+            let response = ui.add(
+                egui::TextEdit::multiline(text_buffer)
+                    .frame(false)
+                    .margin(egui::Margin::same(0))
+                    .desired_rows(row_count)
+                    .desired_width(desired_width)
+                    .font(FontId::proportional(font_size))
+                    .horizontal_align(egui::Align::Min)
+                    .text_color(text_style.color.to_egui()),
+            );
+            if *text_editor_should_focus {
+                response.request_focus();
+                *text_editor_should_focus = false;
+            }
+
+            if response.lost_focus() && ui.input(|input| input.pointer.any_pressed()) {
+                output.text_submit_requested = true;
+            }
+        });
+}
+
+fn available_text_wrap_width_screen(transform: ScreenTransform, anchor: ImagePoint) -> f32 {
+    ((transform.image_size[0] as f32 - anchor.x).max(1.0) * transform.scale).max(1.0)
+}
+
+fn layout_wrapped_text(
+    painter: &egui::Painter,
+    transform: ScreenTransform,
+    text: &TextOverlay,
+) -> std::sync::Arc<egui::Galley> {
+    painter.layout(
+        text.text.clone(),
+        FontId::proportional((text.style.size * transform.scale).max(10.0)),
+        text.style.color.to_egui(),
+        available_text_wrap_width_screen(transform, text.anchor),
+    )
 }
 
 fn paint_crop_overlay(
@@ -823,26 +920,10 @@ fn text_bounds_offset(
     transform: ScreenTransform,
     text: &TextOverlay,
 ) -> ImageRect {
-    let galley = painter.layout_no_wrap(
-        text.text.clone(),
-        FontId::proportional((text.style.size * transform.scale).max(10.0)),
-        text.style.color.to_egui(),
-    );
-    let bounds = if galley.mesh_bounds.is_positive() {
-        galley.mesh_bounds
-    } else {
-        galley.rect
-    };
-
+    let size = layout_wrapped_text(painter, transform, text).size();
     ImageRect::from_points(
-        ImagePoint::new(
-            bounds.min.x / transform.scale,
-            bounds.min.y / transform.scale,
-        ),
-        ImagePoint::new(
-            bounds.max.x / transform.scale,
-            bounds.max.y / transform.scale,
-        ),
+        ImagePoint::new(0.0, 0.0),
+        ImagePoint::new(size.x / transform.scale, size.y / transform.scale),
     )
 }
 

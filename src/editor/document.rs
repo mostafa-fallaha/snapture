@@ -4,7 +4,9 @@ use ab_glyph::FontArc;
 use fontdb::{Database, Family, Query, Source};
 use image::{Pixel, RgbaImage, imageops};
 use imageproc::{
-    drawing::{draw_antialiased_line_segment_mut, draw_antialiased_polygon_mut, draw_text_mut},
+    drawing::{
+        draw_antialiased_line_segment_mut, draw_antialiased_polygon_mut, draw_text_mut, text_size,
+    },
     pixelops::interpolate,
     point::Point,
 };
@@ -288,8 +290,10 @@ fn render_text(
     let anchor = scale_point(text.anchor, scale);
     let size = text.style.size * scale;
     let line_height = size * 1.25;
+    let max_width = (image.width() as f32 - anchor.x).max(1.0);
+    let wrapped_lines = wrap_text_for_export(&text.text, font, size, max_width);
 
-    for (index, line) in text.text.lines().enumerate() {
+    for (index, line) in wrapped_lines.iter().enumerate() {
         let y = anchor.y + line_height * index as f32;
         draw_text_mut(
             image,
@@ -303,6 +307,39 @@ fn render_text(
     }
 
     Ok(())
+}
+
+fn wrap_text_for_export(text: &str, font: &FontArc, size: f32, max_width: f32) -> Vec<String> {
+    let mut wrapped = Vec::new();
+    let max_width = max_width.max(1.0);
+
+    for raw_line in text.split('\n') {
+        if raw_line.is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        for ch in raw_line.chars() {
+            let mut candidate = current.clone();
+            candidate.push(ch);
+
+            if !current.is_empty() && text_size(size, font, &candidate).0 as f32 > max_width {
+                wrapped.push(current);
+                current = ch.to_string();
+            } else {
+                current.push(ch);
+            }
+        }
+
+        wrapped.push(current);
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+
+    wrapped
 }
 
 fn render_polyline(

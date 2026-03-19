@@ -19,11 +19,17 @@ pub struct ArrowOverlay {
     pub style: StrokeStyle,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAlignment {
+    Left,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextOverlay {
     pub anchor: ImagePoint,
     pub text: String,
     pub style: TextStyle,
+    pub alignment: TextAlignment,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +97,7 @@ impl OverlayObject {
                 anchor: text.anchor.translated(dx, dy),
                 text: text.text.clone(),
                 style: text.style.clone(),
+                alignment: text.alignment.clone(),
             }),
             Self::Crop(crop) => Self::Crop(CropOverlay {
                 rect: crop.rect.translated(dx, dy),
@@ -140,6 +147,7 @@ impl OverlayObject {
                     color: text.style.color,
                     size: (text.style.size * uniform_scale).max(8.0),
                 },
+                alignment: text.alignment.clone(),
             }),
             Self::Crop(crop) => Self::Crop(CropOverlay {
                 rect: ImageRect::from_points(
