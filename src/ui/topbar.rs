@@ -17,18 +17,24 @@ pub fn show(
     can_undo: bool,
     can_redo: bool,
     extracting_text: bool,
+    saving_document: bool,
     status: &str,
 ) -> TopbarOutput {
     let mut output = TopbarOutput::default();
 
     ui.horizontal(|ui| {
         action_group(ui, |ui| {
-            let save = ui.add(
-                Button::new(RichText::new("Save").size(12.5).strong())
-                    .fill(theme::ACCENT)
-                    .stroke(Stroke::new(1.0, theme::ACCENT_HOVER))
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(vec2(74.0, theme::CONTROL_HEIGHT)),
+            let save = ui.add_enabled(
+                !saving_document,
+                Button::new(
+                    RichText::new(if saving_document { "Saving..." } else { "Save" })
+                        .size(12.5)
+                        .strong(),
+                )
+                .fill(theme::ACCENT)
+                .stroke(Stroke::new(1.0, theme::ACCENT_HOVER))
+                .corner_radius(CornerRadius::same(8))
+                .min_size(vec2(74.0, theme::CONTROL_HEIGHT)),
             );
             if save.clicked() {
                 output.save_clicked = true;
@@ -98,7 +104,7 @@ pub fn show(
         });
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            status_badge(ui, status, extracting_text);
+            status_badge(ui, status, extracting_text || saving_document);
         });
     });
 

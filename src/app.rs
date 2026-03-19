@@ -29,11 +29,20 @@ const MAX_STROKE_THICKNESS: f32 = 24.0;
 const MIN_HIGHLIGHTER_THICKNESS: f32 = 10.0;
 const MAX_HIGHLIGHTER_THICKNESS: f32 = 34.0;
 const HIGHLIGHTER_DEFAULT_THICKNESS: f32 = 16.0;
-const OCR_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 struct PendingTextExtraction {
     receiver: Receiver<Result<String, String>>,
     source_label: &'static str,
+}
+
+struct PendingSave {
+    receiver: Receiver<Result<SaveOutcome, String>>,
+}
+
+enum SaveOutcome {
+    Saved(PathBuf),
+    Cancelled,
 }
 
 pub struct SnaptureApp {
@@ -58,6 +67,7 @@ pub struct SnaptureApp {
     extracted_text_source: &'static str,
     extracted_text_window_open: bool,
     pending_text_extraction: Option<PendingTextExtraction>,
+    pending_save: Option<PendingSave>,
     save_path: String,
     canvas_state: CanvasState,
     status: String,
@@ -97,6 +107,7 @@ impl SnaptureApp {
             extracted_text_source: "screenshot",
             extracted_text_window_open: false,
             pending_text_extraction: None,
+            pending_save: None,
             save_path,
             canvas_state: CanvasState::default(),
             status: format!(
@@ -300,25 +311,27 @@ impl SnaptureApp {
     }
 
     fn save_document(&mut self) {
-        let path = match save::choose_save_path(PathBuf::from(&self.save_path)) {
-            Ok(Some(path)) => path,
-            Ok(None) => {
-                self.set_status("Save cancelled.");
-                return;
-            }
-            Err(error) => {
-                self.set_status(format!("Save dialog failed: {error}"));
-                return;
-            }
-        };
-
-        match save::save_document_png(&self.document, &path) {
-            Ok(path) => {
-                self.save_path = path.display().to_string();
-                self.set_status(format!("Saved {}", path.display()));
-            }
-            Err(error) => self.set_status(format!("Save failed: {error}")),
+        if self.pending_save.is_some() {
+            self.set_status("A save is already in progress.");
+            return;
         }
+
+        let default_path = PathBuf::from(&self.save_path);
+        let document = self.document.clone();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = match save::choose_save_path(default_path) {
+                Ok(Some(path)) => save::save_document_png(&document, &path)
+                    .map(SaveOutcome::Saved)
+                    .map_err(|error| error.to_string()),
+                Ok(None) => Ok(SaveOutcome::Cancelled),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = sender.send(result);
+        });
+
+        self.pending_save = Some(PendingSave { receiver });
+        self.set_status("Choose a save location in the file dialog...");
     }
 
     fn copy_document(&mut self) {
@@ -358,6 +371,31 @@ impl SnaptureApp {
             source_label,
         });
         self.set_status(format!("Extracting text from the {source_label}..."));
+    }
+
+    fn poll_save(&mut self) {
+        let Some(pending) = self.pending_save.take() else {
+            return;
+        };
+
+        match pending.receiver.try_recv() {
+            Ok(Ok(SaveOutcome::Saved(path))) => {
+                self.save_path = path.display().to_string();
+                self.set_status(format!("Saved {}", path.display()));
+            }
+            Ok(Ok(SaveOutcome::Cancelled)) => {
+                self.set_status("Save cancelled.");
+            }
+            Ok(Err(error)) => {
+                self.set_status(format!("Save dialog failed: {error}"));
+            }
+            Err(TryRecvError::Empty) => {
+                self.pending_save = Some(pending);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.set_status("Save worker stopped unexpectedly.");
+            }
+        }
     }
 
     fn poll_text_extraction(&mut self) {
@@ -738,11 +776,12 @@ impl SnaptureApp {
 
 impl eframe::App for SnaptureApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.poll_save();
         self.poll_text_extraction();
         self.handle_shortcuts(ctx);
 
-        if self.pending_text_extraction.is_some() {
-            ctx.request_repaint_after(OCR_POLL_INTERVAL);
+        if self.pending_save.is_some() || self.pending_text_extraction.is_some() {
+            ctx.request_repaint_after(WORKER_POLL_INTERVAL);
         }
 
         TopBottomPanel::top("topbar")
@@ -753,6 +792,7 @@ impl eframe::App for SnaptureApp {
                     self.history.can_undo(),
                     self.history.can_redo(),
                     self.pending_text_extraction.is_some(),
+                    self.pending_save.is_some(),
                     &self.status,
                 );
 
