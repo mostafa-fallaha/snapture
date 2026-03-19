@@ -6,7 +6,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, CentralPanel, Context, Key, KeyboardShortcut, Modifiers, SidePanel, TopBottomPanel,
+    self, Button, CentralPanel, Context, CornerRadius, Key, KeyboardShortcut, Modifiers, RichText,
+    SidePanel, Stroke, TopBottomPanel,
 };
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
     },
     services::{clipboard, ocr, save},
     tools::{self, DraftOverlay, ToolKind},
-    ui::{toolbar, topbar},
+    ui::{theme, toolbar, topbar},
 };
 
 const HIGHLIGHTER_ALPHA: u8 = 112;
@@ -68,6 +69,8 @@ impl SnaptureApp {
         config: AppConfig,
         initial_capture: CapturedImage,
     ) -> Self {
+        theme::apply(&cc.egui_ctx);
+
         let document = Document::from_image(initial_capture.image, initial_capture.source_uri);
         let history = HistoryManager::new(config.history_limit);
         let save_path = config.default_save_path().display().to_string();
@@ -405,16 +408,25 @@ impl SnaptureApp {
         let mut copy_clicked = false;
 
         egui::Window::new("Extracted Text")
+            .collapsible(false)
             .default_width(460.0)
             .anchor(egui::Align2::RIGHT_TOP, [-16.0, 72.0])
+            .frame(theme::floating_frame())
             .open(&mut window_open)
             .show(ctx, |ui| {
-                ui.label(format!("Source: {}", self.extracted_text_source));
+                ui.label(
+                    RichText::new(format!("Source: {}", self.extracted_text_source))
+                        .size(11.5)
+                        .color(theme::TEXT_MUTED),
+                );
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
                             !self.extracted_text.trim().is_empty(),
-                            egui::Button::new("Copy Text"),
+                            Button::new(RichText::new("Copy Text").strong())
+                                .fill(theme::ACCENT)
+                                .stroke(Stroke::new(1.0, theme::ACCENT_HOVER))
+                                .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
                     {
@@ -453,12 +465,17 @@ impl SnaptureApp {
             .resizable(false)
             .default_width(320.0)
             .anchor(egui::Align2::RIGHT_TOP, [-16.0, 72.0])
+            .frame(theme::floating_frame())
             .show(ctx, |ui| {
-                ui.label(format!("Anchor: {:.0}, {:.0}", anchor.x, anchor.y));
+                ui.label(
+                    RichText::new(format!("Anchor: {:.0}, {:.0}", anchor.x, anchor.y))
+                        .size(11.5)
+                        .color(theme::TEXT_MUTED),
+                );
                 let response = ui.add(
                     egui::TextEdit::multiline(&mut self.text_buffer)
                         .desired_rows(4)
-                        .desired_width(280.0)
+                        .desired_width(f32::INFINITY)
                         .hint_text("Type text and press Add Text"),
                 );
                 if should_focus {
@@ -469,7 +486,10 @@ impl SnaptureApp {
                     if ui
                         .add_enabled(
                             !self.text_buffer.trim().is_empty(),
-                            egui::Button::new("Add Text"),
+                            Button::new(RichText::new("Add Text").strong())
+                                .fill(theme::ACCENT)
+                                .stroke(Stroke::new(1.0, theme::ACCENT_HOVER))
+                                .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
                     {
@@ -488,7 +508,13 @@ impl SnaptureApp {
                         }
                     }
 
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Cancel"))
+                                .corner_radius(CornerRadius::same(8)),
+                        )
+                        .clicked()
+                    {
                         self.pending_text_anchor = None;
                         self.text_editor_should_focus = false;
                         self.text_buffer.clear();
@@ -719,36 +745,39 @@ impl eframe::App for SnaptureApp {
             ctx.request_repaint_after(OCR_POLL_INTERVAL);
         }
 
-        TopBottomPanel::top("topbar").show(ctx, |ui| {
-            let output = topbar::show(
-                ui,
-                self.history.can_undo(),
-                self.history.can_redo(),
-                self.pending_text_extraction.is_some(),
-                &self.status,
-            );
+        TopBottomPanel::top("topbar")
+            .frame(theme::topbar_frame())
+            .show(ctx, |ui| {
+                let output = topbar::show(
+                    ui,
+                    self.history.can_undo(),
+                    self.history.can_redo(),
+                    self.pending_text_extraction.is_some(),
+                    &self.status,
+                );
 
-            if output.save_clicked {
-                self.save_document();
-            }
-            if output.copy_clicked {
-                self.copy_document();
-            }
-            if output.extract_text_clicked {
-                self.start_text_extraction();
-            }
-            if output.undo_clicked {
-                self.undo(ctx);
-            }
-            if output.redo_clicked {
-                self.redo(ctx);
-            }
-            if output.fit_clicked {
-                self.canvas_state.zoom = 1.0;
-            }
-        });
+                if output.save_clicked {
+                    self.save_document();
+                }
+                if output.copy_clicked {
+                    self.copy_document();
+                }
+                if output.extract_text_clicked {
+                    self.start_text_extraction();
+                }
+                if output.undo_clicked {
+                    self.undo(ctx);
+                }
+                if output.redo_clicked {
+                    self.redo(ctx);
+                }
+                if output.fit_clicked {
+                    self.canvas_state.zoom = 1.0;
+                }
+            });
 
         SidePanel::left("toolbar")
+            .frame(theme::sidebar_frame())
             .resizable(false)
             .default_width(260.0)
             .show(ctx, |ui| {
@@ -782,23 +811,25 @@ impl eframe::App for SnaptureApp {
                 }
             });
 
-        CentralPanel::default().show(ctx, |ui| {
-            let preview_overlays = self.preview_overlays();
-            let output = canvas::show(
-                ui,
-                &self.document,
-                self.texture.as_ref(),
-                &mut self.canvas_state,
-                &preview_overlays,
-                self.active_tool == ToolKind::Crop,
-                self.pending_crop,
-                self.active_tool == ToolKind::Text,
-                self.pending_text_anchor.is_none(),
-                self.active_tool == ToolKind::Select,
-                self.selected_overlay,
-            );
-            self.handle_canvas_output(output, ctx);
-        });
+        CentralPanel::default()
+            .frame(theme::central_frame())
+            .show(ctx, |ui| {
+                let preview_overlays = self.preview_overlays();
+                let output = canvas::show(
+                    ui,
+                    &self.document,
+                    self.texture.as_ref(),
+                    &mut self.canvas_state,
+                    &preview_overlays,
+                    self.active_tool == ToolKind::Crop,
+                    self.pending_crop,
+                    self.active_tool == ToolKind::Text,
+                    self.pending_text_anchor.is_none(),
+                    self.active_tool == ToolKind::Select,
+                    self.selected_overlay,
+                );
+                self.handle_canvas_output(output, ctx);
+            });
 
         self.show_text_editor(ctx);
         self.show_extracted_text_window(ctx);

@@ -9,6 +9,7 @@ use crate::{
         overlay::{CropOverlay, OverlayObject, TextOverlay},
         types::{ImagePoint, ImageRect},
     },
+    ui::theme,
 };
 
 #[derive(Clone, Debug)]
@@ -156,7 +157,13 @@ pub fn show(
     let (response, painter) = ui.allocate_painter(available, Sense::click_and_drag());
     let mut output = CanvasOutput::default();
 
-    painter.rect_filled(response.rect, 0.0, Color32::from_gray(26));
+    painter.rect_filled(response.rect, 12.0, theme::APP_BG);
+    painter.rect_stroke(
+        response.rect.shrink(0.5),
+        12.0,
+        Stroke::new(1.0, theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
 
     let image_size = document.image_size();
     let image_size_vec = vec2(image_size[0] as f32, image_size[1] as f32);
@@ -172,7 +179,15 @@ pub fn show(
         image_size,
     };
 
-    painter.rect_filled(image_rect.expand(6.0), 4.0, Color32::from_gray(18));
+    let image_frame = image_rect.expand(8.0);
+    painter.rect_filled(image_frame, 10.0, theme::PANEL_BG);
+    painter.rect_stroke(
+        image_frame,
+        10.0,
+        Stroke::new(1.0, theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_filled(image_rect, 4.0, Color32::from_gray(10));
 
     if let Some(texture) = texture {
         painter.image(
@@ -571,24 +586,23 @@ fn paint_overlay(
 
 fn paint_selection_overlay(painter: &egui::Painter, transform: ScreenTransform, bounds: ImageRect) {
     let screen_rect = transform.image_rect_to_screen(bounds);
-    let border_color = Color32::from_rgb(84, 160, 255);
+    let border_color = theme::ACCENT_HOVER;
+
+    painter.rect_filled(
+        screen_rect,
+        4.0,
+        Color32::from_rgba_unmultiplied(border_color.r(), border_color.g(), border_color.b(), 22),
+    );
 
     painter.rect_stroke(
         screen_rect,
-        0.0,
+        4.0,
         Stroke::new(2.0, border_color),
         egui::StrokeKind::Inside,
     );
 
     for center in crop_handle_positions(screen_rect) {
-        let handle_rect = Rect::from_center_size(center, vec2(9.0, 9.0));
-        painter.rect_filled(handle_rect, 2.0, Color32::WHITE);
-        painter.rect_stroke(
-            handle_rect,
-            2.0,
-            Stroke::new(1.5, border_color),
-            egui::StrokeKind::Inside,
-        );
+        paint_handle(painter, center, border_color);
     }
 }
 
@@ -599,11 +613,11 @@ fn paint_crop_overlay(
     preview: bool,
 ) {
     let screen_rect = transform.image_rect_to_screen(crop.rect);
-    let shade = Color32::from_rgba_unmultiplied(0, 0, 0, 96);
+    let shade = Color32::from_rgba_unmultiplied(5, 7, 10, 116);
     let border_color = if preview {
-        Color32::from_rgb(80, 220, 140)
+        theme::SUCCESS
     } else {
-        Color32::from_rgb(64, 196, 120)
+        Color32::from_rgb(70, 164, 116)
     };
 
     let top = Rect::from_min_max(
@@ -629,25 +643,64 @@ fn paint_crop_overlay(
         }
     }
 
+    painter.rect_filled(
+        screen_rect,
+        4.0,
+        Color32::from_rgba_unmultiplied(border_color.r(), border_color.g(), border_color.b(), 18),
+    );
+
     painter.rect_stroke(
         screen_rect,
-        0.0,
+        4.0,
         Stroke::new(if preview { 3.0 } else { 2.0 }, border_color),
         egui::StrokeKind::Inside,
     );
 
+    paint_crop_size_badge(painter, screen_rect, crop, border_color);
+
     if preview {
         for center in crop_handle_positions(screen_rect) {
-            let handle_rect = Rect::from_center_size(center, vec2(9.0, 9.0));
-            painter.rect_filled(handle_rect, 2.0, Color32::WHITE);
-            painter.rect_stroke(
-                handle_rect,
-                2.0,
-                Stroke::new(1.5, border_color),
-                egui::StrokeKind::Inside,
-            );
+            paint_handle(painter, center, border_color);
         }
     }
+}
+
+fn paint_handle(painter: &egui::Painter, center: Pos2, border_color: Color32) {
+    let handle_rect = Rect::from_center_size(center, vec2(10.0, 10.0));
+    painter.rect_filled(handle_rect, 3.0, theme::PANEL_BG);
+    painter.rect_stroke(
+        handle_rect,
+        3.0,
+        Stroke::new(1.5, border_color),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn paint_crop_size_badge(
+    painter: &egui::Painter,
+    screen_rect: Rect,
+    crop: &CropOverlay,
+    border_color: Color32,
+) {
+    let size_text = format!("{:.0} x {:.0}", crop.rect.width(), crop.rect.height());
+    let galley = painter.layout_no_wrap(size_text, FontId::proportional(11.5), theme::TEXT);
+    let badge_rect = Rect::from_min_size(
+        screen_rect.min + vec2(10.0, 10.0),
+        galley.size() + vec2(12.0, 8.0),
+    );
+
+    painter.rect_filled(
+        badge_rect,
+        6.0,
+        Color32::from_rgba_unmultiplied(17, 21, 27, 224),
+    );
+    painter.rect_stroke(
+        badge_rect,
+        6.0,
+        Stroke::new(1.0, border_color),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(badge_rect.min + vec2(6.0, 4.0), galley, theme::TEXT);
 }
 
 fn crop_interaction_at(screen_rect: Rect, point: Pos2) -> Option<CropInteractionKind> {
