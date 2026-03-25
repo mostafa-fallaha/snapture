@@ -147,6 +147,8 @@ pub fn show(
     document: &Document,
     texture: Option<&TextureHandle>,
     state: &mut CanvasState,
+    min_zoom: f32,
+    max_zoom: f32,
     preview_overlays: &[OverlayObject],
     crop_tool_active: bool,
     pending_crop: Option<ImageRect>,
@@ -163,6 +165,21 @@ pub fn show(
     let available = ui.available_size_before_wrap();
     let (response, painter) = ui.allocate_painter(available, Sense::click_and_drag());
     let mut output = CanvasOutput::default();
+
+    if response.contains_pointer() {
+        let zoom_delta = ui.ctx().input(|input| {
+            if input.modifiers.ctrl {
+                input.zoom_delta()
+            } else {
+                1.0
+            }
+        });
+
+        if (zoom_delta - 1.0).abs() > f32::EPSILON {
+            state.zoom = (state.zoom * zoom_delta).clamp(min_zoom, max_zoom);
+            ui.ctx().request_repaint();
+        }
+    }
 
     painter.rect_filled(response.rect, 12.0, theme::APP_BG);
     painter.rect_stroke(

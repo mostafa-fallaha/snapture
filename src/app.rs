@@ -870,6 +870,8 @@ impl eframe::App for SnaptureApp {
                     &self.document,
                     self.texture.as_ref(),
                     &mut self.canvas_state,
+                    self.config.min_zoom,
+                    self.config.max_zoom,
                     &preview_overlays,
                     self.active_tool == ToolKind::Crop,
                     self.pending_crop,
