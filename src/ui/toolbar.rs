@@ -126,6 +126,8 @@ pub fn show(
             if response.clicked() {
                 output.delete_selected = true;
             }
+
+            response.on_hover_text("Delete selected object (Delete)");
         });
     }
 

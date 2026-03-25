@@ -697,6 +697,9 @@ impl SnaptureApp {
         let save_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::S);
         let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
         let global_copy_shortcut_enabled = !ctx.wants_keyboard_input();
+        let delete_shortcut_enabled = self.active_tool == ToolKind::Select
+            && self.selected_overlay.is_some()
+            && !ctx.wants_keyboard_input();
         let crop_shortcuts_enabled = self.active_tool == ToolKind::Crop
             && self.pending_crop.is_some()
             && global_copy_shortcut_enabled;
@@ -762,6 +765,11 @@ impl SnaptureApp {
         {
             self.copy_document();
         }
+        if delete_shortcut_enabled
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Delete))
+        {
+            self.delete_selected_overlay();
+        }
         if crop_shortcuts_enabled
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter))
         {
@@ -821,7 +829,7 @@ impl eframe::App for SnaptureApp {
                     self.redo(ctx);
                 }
                 if output.fit_clicked {
-                    self.canvas_state.zoom = 1.0;
+                    self.canvas_state.reset_view();
                 }
             });
 

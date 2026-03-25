@@ -15,6 +15,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CanvasState {
     pub zoom: f32,
+    pan: egui::Vec2,
+    pan_interaction: Option<PanInteractionState>,
     crop_interaction: Option<CropInteractionState>,
     text_interaction: Option<TextInteractionState>,
     selection_interaction: Option<SelectionInteractionState>,
@@ -24,10 +26,20 @@ impl Default for CanvasState {
     fn default() -> Self {
         Self {
             zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+            pan_interaction: None,
             crop_interaction: None,
             text_interaction: None,
             selection_interaction: None,
         }
+    }
+}
+
+impl CanvasState {
+    pub fn reset_view(&mut self) {
+        self.zoom = 1.0;
+        self.pan = egui::Vec2::ZERO;
+        self.pan_interaction = None;
     }
 }
 
@@ -100,6 +112,12 @@ impl ScreenTransform {
             ((point.y - self.image_rect.min.y) / self.scale).clamp(0.0, self.image_size[1] as f32);
         ImagePoint::new(x, y)
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PanInteractionState {
+    origin: Pos2,
+    initial_pan: egui::Vec2,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -196,7 +214,12 @@ pub fn show(
         .min(1.0);
     let scale = fit_scale * state.zoom.max(0.01);
     let scaled_size = image_size_vec * scale;
-    let image_rect = Rect::from_center_size(response.rect.center(), scaled_size);
+    state.pan = clamp_pan_offset(state.pan, response.rect.size(), scaled_size);
+    let pan_mode = state.pan_interaction.is_some()
+        || (pending_text_anchor.is_none()
+            && response.contains_pointer()
+            && ui.input(|input| input.modifiers.ctrl));
+    let image_rect = Rect::from_center_size(response.rect.center() + state.pan, scaled_size);
     let transform = ScreenTransform {
         image_rect,
         scale,
@@ -309,7 +332,15 @@ pub fn show(
         None
     };
 
-    if crop_tool_active {
+    if pan_mode {
+        ui.output_mut(|output| {
+            output.cursor_icon = if state.pan_interaction.is_some() {
+                CursorIcon::Grabbing
+            } else {
+                CursorIcon::Grab
+            };
+        });
+    } else if crop_tool_active {
         let cursor = state
             .crop_interaction
             .map(|interaction| crop_cursor(interaction.kind))
@@ -340,118 +371,139 @@ pub fn show(
         }
     }
 
-    if response.drag_started() {
-        let crop_drag_started = if crop_tool_active {
-            if let (Some(rect), Some(origin_screen), Some(origin_image)) = (
-                pending_crop,
-                press_origin,
-                press_origin.map(|pos| transform.screen_to_image_clamped(pos)),
-            ) {
-                crop_interaction_at(transform.image_rect_to_screen(rect), origin_screen).map(
-                    |kind| CropInteractionState {
-                        kind,
-                        origin: origin_image,
-                        initial_rect: rect,
-                    },
-                )
-            } else {
-                None
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        if pan_mode {
+            if let Some(origin) = press_origin {
+                state.pan_interaction = Some(PanInteractionState {
+                    origin,
+                    initial_pan: state.pan,
+                });
             }
         } else {
-            None
-        };
-        let selection_drag_started = if selection_tool_active {
-            if let (Some(origin_screen), Some(origin_image), Some(bounds), Some(index)) = (
-                press_origin,
-                press_origin.map(|pos| transform.screen_to_image_clamped(pos)),
-                selected_overlay_bounds,
-                selected_overlay,
-            ) {
-                crop_interaction_at(transform.image_rect_to_screen(bounds), origin_screen).and_then(
-                    |kind| {
-                        document
-                            .overlays()
-                            .get(index)
-                            .cloned()
-                            .map(|initial_overlay| SelectionInteractionState {
-                                overlay_index: index,
-                                interaction: CropInteractionState {
-                                    kind,
-                                    origin: origin_image,
-                                    initial_rect: bounds,
-                                },
-                                initial_overlay,
-                            })
-                    },
-                )
+            let crop_drag_started = if crop_tool_active {
+                if let (Some(rect), Some(origin_screen), Some(origin_image)) = (
+                    pending_crop,
+                    press_origin,
+                    press_origin.map(|pos| transform.screen_to_image_clamped(pos)),
+                ) {
+                    crop_interaction_at(transform.image_rect_to_screen(rect), origin_screen).map(
+                        |kind| CropInteractionState {
+                            kind,
+                            origin: origin_image,
+                            initial_rect: rect,
+                        },
+                    )
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
-        let selection_overlay_drag_started =
-            if selection_tool_active && selection_drag_started.is_none() {
+            };
+            let selection_drag_started = if selection_tool_active {
+                if let (Some(origin_screen), Some(origin_image), Some(bounds), Some(index)) = (
+                    press_origin,
+                    press_origin.map(|pos| transform.screen_to_image_clamped(pos)),
+                    selected_overlay_bounds,
+                    selected_overlay,
+                ) {
+                    crop_interaction_at(transform.image_rect_to_screen(bounds), origin_screen)
+                        .and_then(|kind| {
+                            document
+                                .overlays()
+                                .get(index)
+                                .cloned()
+                                .map(|initial_overlay| SelectionInteractionState {
+                                    overlay_index: index,
+                                    interaction: CropInteractionState {
+                                        kind,
+                                        origin: origin_image,
+                                        initial_rect: bounds,
+                                    },
+                                    initial_overlay,
+                                })
+                        })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let selection_overlay_drag_started =
+                if selection_tool_active && selection_drag_started.is_none() {
+                    press_origin
+                        .and_then(|pos| transform.screen_to_image(pos))
+                        .and_then(|point| {
+                            overlay_at(&painter, transform, document, point)
+                                .map(|(overlay_index, bounds)| (point, overlay_index, bounds))
+                        })
+                        .and_then(|(point, overlay_index, bounds)| {
+                            document
+                                .overlays()
+                                .get(overlay_index)
+                                .cloned()
+                                .map(|initial_overlay| SelectionInteractionState {
+                                    overlay_index,
+                                    interaction: CropInteractionState {
+                                        kind: CropInteractionKind::Move,
+                                        origin: point,
+                                        initial_rect: bounds,
+                                    },
+                                    initial_overlay,
+                                })
+                        })
+                } else {
+                    None
+                };
+            let text_drag_started = if text_tool_active && text_drag_enabled {
                 press_origin
                     .and_then(|pos| transform.screen_to_image(pos))
                     .and_then(|point| {
-                        overlay_at(&painter, transform, document, point)
-                            .map(|(overlay_index, bounds)| (point, overlay_index, bounds))
-                    })
-                    .and_then(|(point, overlay_index, bounds)| {
-                        document
-                            .overlays()
-                            .get(overlay_index)
-                            .cloned()
-                            .map(|initial_overlay| SelectionInteractionState {
+                        text_overlay_at(&painter, transform, document, point).map(
+                            |(overlay_index, initial_anchor, bounds_offset)| TextInteractionState {
                                 overlay_index,
-                                interaction: CropInteractionState {
-                                    kind: CropInteractionKind::Move,
-                                    origin: point,
-                                    initial_rect: bounds,
-                                },
-                                initial_overlay,
-                            })
+                                origin: point,
+                                initial_anchor,
+                                bounds_offset,
+                            },
+                        )
                     })
             } else {
                 None
             };
-        let text_drag_started = if text_tool_active && text_drag_enabled {
-            press_origin
-                .and_then(|pos| transform.screen_to_image(pos))
-                .and_then(|point| {
-                    text_overlay_at(&painter, transform, document, point).map(
-                        |(overlay_index, initial_anchor, bounds_offset)| TextInteractionState {
-                            overlay_index,
-                            origin: point,
-                            initial_anchor,
-                            bounds_offset,
-                        },
-                    )
-                })
-        } else {
-            None
-        };
 
-        if let Some(interaction) = crop_drag_started {
-            state.crop_interaction = Some(interaction);
-        } else if let Some(interaction) = selection_drag_started {
-            output.object_transform_started = Some(interaction.overlay_index);
-            state.selection_interaction = Some(interaction);
-        } else if let Some(interaction) = selection_overlay_drag_started {
-            output.selection_changed = true;
-            output.selected_overlay = Some(interaction.overlay_index);
-            output.object_transform_started = Some(interaction.overlay_index);
-            state.selection_interaction = Some(interaction);
-        } else if let Some(interaction) = text_drag_started {
-            output.text_drag_started = Some(interaction.overlay_index);
-            state.text_interaction = Some(interaction);
-        } else if !crop_tool_active && !text_tool_active && !selection_tool_active {
-            output.drag_started = press_origin.and_then(|pos| transform.screen_to_image(pos));
+            if let Some(interaction) = crop_drag_started {
+                state.crop_interaction = Some(interaction);
+            } else if let Some(interaction) = selection_drag_started {
+                output.object_transform_started = Some(interaction.overlay_index);
+                state.selection_interaction = Some(interaction);
+            } else if let Some(interaction) = selection_overlay_drag_started {
+                output.selection_changed = true;
+                output.selected_overlay = Some(interaction.overlay_index);
+                output.object_transform_started = Some(interaction.overlay_index);
+                state.selection_interaction = Some(interaction);
+            } else if let Some(interaction) = text_drag_started {
+                output.text_drag_started = Some(interaction.overlay_index);
+                state.text_interaction = Some(interaction);
+            } else if !crop_tool_active && !text_tool_active && !selection_tool_active {
+                output.drag_started = press_origin.and_then(|pos| transform.screen_to_image(pos));
+            }
         }
     }
 
-    if let Some(interaction) = state.crop_interaction {
+    if let Some(interaction) = state.pan_interaction {
+        if response.dragged_by(egui::PointerButton::Primary)
+            || response.drag_stopped_by(egui::PointerButton::Primary)
+        {
+            if let Some(current) = pointer_pos {
+                let pan = interaction.initial_pan + (current - interaction.origin);
+                state.pan = clamp_pan_offset(pan, response.rect.size(), scaled_size);
+            }
+        }
+
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
+            state.pan_interaction = None;
+        }
+    } else if let Some(interaction) = state.crop_interaction {
         if response.dragged() || response.drag_stopped() {
             if let Some(current) = pointer_pos.map(|pos| transform.screen_to_image_clamped(pos)) {
                 output.crop_rect = Some(apply_crop_interaction(interaction, current, image_size));
@@ -528,7 +580,7 @@ pub fn show(
         None
     };
 
-    let canvas_clicked = response.clicked() && !ui.ctx().is_pointer_over_area();
+    let canvas_clicked = response.clicked() && !ui.ctx().is_pointer_over_area() && !pan_mode;
 
     if canvas_clicked && selection_tool_active {
         output.selection_changed = true;
@@ -544,6 +596,17 @@ pub fn show(
     }
 
     output
+}
+
+fn clamp_pan_offset(
+    pan: egui::Vec2,
+    viewport_size: egui::Vec2,
+    scaled_size: egui::Vec2,
+) -> egui::Vec2 {
+    let max_x = (scaled_size.x - viewport_size.x).abs() * 0.5;
+    let max_y = (scaled_size.y - viewport_size.y).abs() * 0.5;
+
+    vec2(pan.x.clamp(-max_x, max_x), pan.y.clamp(-max_y, max_y))
 }
 
 fn paint_overlay(
