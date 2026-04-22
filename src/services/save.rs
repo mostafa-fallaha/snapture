@@ -11,7 +11,7 @@ pub fn choose_save_path(default_path: impl AsRef<Path>) -> AppResult<Option<Path
         .arg("--file-selection")
         .arg("--save")
         .arg("--confirm-overwrite")
-        .arg("--title=Save Annotated Screenshot")
+        .arg("--title=Save Image")
         .arg(format!("--filename={}", default_path.display()))
         .output()?;
 

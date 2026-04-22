@@ -8,7 +8,6 @@ use crate::error::{AppResult, SnaptureError};
 
 pub struct CapturedImage {
     pub image: RgbaImage,
-    pub source_uri: Option<String>,
 }
 
 pub async fn capture_screenshot() -> AppResult<CapturedImage> {
@@ -19,10 +18,7 @@ pub async fn capture_screenshot() -> AppResult<CapturedImage> {
     let path = file_path_from_uri(&uri)?;
     let image = image::open(path)?.to_rgba8();
 
-    Ok(CapturedImage {
-        image,
-        source_uri: Some(uri),
-    })
+    Ok(CapturedImage { image })
 }
 
 fn file_path_from_uri(uri: &str) -> AppResult<PathBuf> {

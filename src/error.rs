@@ -12,7 +12,7 @@ pub enum SnaptureError {
     Portal(#[from] ashpd::Error),
     #[error("clipboard operation failed: {0}")]
     Clipboard(String),
-    #[error("invalid screenshot URI: {0}")]
+    #[error("invalid file URI: {0}")]
     InvalidUri(String),
     #[error("no suitable system font found for text rendering")]
     MissingFont,

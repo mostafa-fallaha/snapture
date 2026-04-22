@@ -1,8 +1,3 @@
-use std::{
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use crate::model::types::RgbaColor;
 
 #[derive(Clone, Debug)]
@@ -29,19 +24,5 @@ impl Default for AppConfig {
             default_stroke_thickness: 4.0,
             default_text_size: 28.0,
         }
-    }
-}
-
-impl AppConfig {
-    pub fn default_save_path(&self) -> PathBuf {
-        let base_dir = dirs::picture_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0);
-
-        base_dir.join(format!("Snapture/snapture-{timestamp}.png"))
     }
 }

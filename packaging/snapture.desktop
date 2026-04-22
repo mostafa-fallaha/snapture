@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Snapture
+Comment=Open PNG files for OCR and annotation
+Exec=snapture %f
+Terminal=false
+Categories=Graphics;Utility;
+MimeType=image/png;
+StartupNotify=false

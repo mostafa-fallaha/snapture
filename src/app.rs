@@ -11,9 +11,9 @@ use eframe::egui::{
 };
 
 use crate::{
-    capture::CapturedImage,
     config::AppConfig,
     editor::{CanvasState, Document, HistoryManager, canvas},
+    launch::LaunchImage,
     model::{
         overlay::{CropOverlay, OverlayObject, TextAlignment},
         types::{ImagePoint, ImageRect, RgbaColor, StrokeStyle, TextStyle},
@@ -78,13 +78,18 @@ impl SnaptureApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         config: AppConfig,
-        initial_capture: CapturedImage,
+        initial_image: LaunchImage,
     ) -> Self {
         theme::apply(&cc.egui_ctx);
 
-        let document = Document::from_image(initial_capture.image, initial_capture.source_uri);
+        let LaunchImage {
+            image,
+            source_uri,
+            initial_save_path,
+        } = initial_image;
+        let document = Document::from_image(image, source_uri);
         let history = HistoryManager::new(config.history_limit);
-        let save_path = config.default_save_path().display().to_string();
+        let save_path = initial_save_path.display().to_string();
 
         let mut app = Self {
             config,
@@ -106,16 +111,13 @@ impl SnaptureApp {
             text_size: 28.0,
             text_buffer: String::new(),
             extracted_text: String::new(),
-            extracted_text_source: "screenshot",
+            extracted_text_source: "image",
             extracted_text_window_open: false,
             pending_text_extraction: None,
             pending_save: None,
             save_path,
             canvas_state: CanvasState::default(),
-            status: format!(
-                "Screenshot captured. {}",
-                Self::tool_status_message(ToolKind::Pen)
-            ),
+            status: format!("Image loaded. {}", Self::tool_status_message(ToolKind::Pen)),
         };
 
         app.stroke_color = app.config.default_color;
@@ -372,7 +374,7 @@ impl SnaptureApp {
         let source_label = if self.pending_crop.is_some() {
             "crop selection"
         } else {
-            "screenshot"
+            "image"
         };
         let image = match self.document.base_image_region(self.pending_crop) {
             Ok(image) => image,

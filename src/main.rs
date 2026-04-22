@@ -3,6 +3,7 @@ mod capture;
 mod config;
 mod editor;
 mod error;
+mod launch;
 mod model;
 mod services;
 mod tools;
@@ -10,17 +11,22 @@ mod ui;
 
 use std::error::Error;
 
-use crate::{app::SnaptureApp, capture::capture_before_ui, config::AppConfig};
+use crate::{
+    app::SnaptureApp,
+    config::AppConfig,
+    launch::{LaunchAction, launch_before_ui},
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let config = AppConfig::default();
-    let initial_capture = match capture_before_ui() {
-        Ok(capture) => capture,
+    let initial_image = match launch_before_ui() {
+        Ok(LaunchAction::Exit) => return Ok(()),
+        Ok(LaunchAction::OpenEditor(image)) => image,
         Err(error) => {
-            eprintln!("snapture: screenshot capture failed: {error}");
+            eprintln!("snapture: {error}");
             return Ok(());
         }
     };
+    let config = AppConfig::default();
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -30,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     };
 
-    let mut initial_capture = Some(initial_capture);
+    let mut initial_image = Some(initial_image);
 
     eframe::run_native(
         config.app_name,
@@ -39,9 +45,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(Box::new(SnaptureApp::new(
                 cc,
                 config.clone(),
-                initial_capture
+                initial_image
                     .take()
-                    .expect("initial capture should be consumed once"),
+                    .expect("initial launch image should be consumed once"),
             )))
         }),
     )?;
