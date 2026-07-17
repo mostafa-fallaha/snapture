@@ -10,6 +10,7 @@
 - Draw freehand pen strokes
 - Draw translucent highlight strokes
 - Draw rectangles
+- Draw circles
 - Draw arrows
 - Place text annotations
 - Select, move, and resize existing annotations
@@ -54,6 +55,7 @@
     │   └── save.rs
     ├── tools
     │   ├── arrow.rs
+    │   ├── circle.rs
     │   ├── crop.rs
     │   ├── highlighter.rs
     │   ├── mod.rs

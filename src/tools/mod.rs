@@ -1,4 +1,5 @@
 pub mod arrow;
+pub mod circle;
 pub mod crop;
 pub mod highlighter;
 pub mod pen;
@@ -11,8 +12,8 @@ use crate::{
         types::{ImagePoint, StrokeStyle},
     },
     tools::{
-        arrow::ArrowDraft, crop::CropDraft, highlighter::HighlighterDraft, pen::PenDraft,
-        rect::RectangleDraft,
+        arrow::ArrowDraft, circle::CircleDraft, crop::CropDraft, highlighter::HighlighterDraft,
+        pen::PenDraft, rect::RectangleDraft,
     },
 };
 
@@ -22,17 +23,19 @@ pub enum ToolKind {
     Pen,
     Highlighter,
     Rectangle,
+    Circle,
     Arrow,
     Text,
     Crop,
 }
 
 impl ToolKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Select,
         Self::Pen,
         Self::Highlighter,
         Self::Rectangle,
+        Self::Circle,
         Self::Arrow,
         Self::Text,
         Self::Crop,
@@ -44,6 +47,7 @@ impl ToolKind {
             Self::Pen => "Pen",
             Self::Highlighter => "Highlight",
             Self::Rectangle => "Rect",
+            Self::Circle => "Circle",
             Self::Arrow => "Arrow",
             Self::Text => "Text",
             Self::Crop => "Crop",
@@ -56,6 +60,7 @@ pub enum DraftOverlay {
     Pen(PenDraft),
     Highlighter(HighlighterDraft),
     Rectangle(RectangleDraft),
+    Circle(CircleDraft),
     Arrow(ArrowDraft),
     Crop(CropDraft),
 }
@@ -66,6 +71,7 @@ impl DraftOverlay {
             Self::Pen(draft) => draft.push(point),
             Self::Highlighter(draft) => draft.update(point),
             Self::Rectangle(draft) => draft.update(point),
+            Self::Circle(draft) => draft.update(point),
             Self::Arrow(draft) => draft.update(point),
             Self::Crop(draft) => draft.update(point),
         }
@@ -76,6 +82,7 @@ impl DraftOverlay {
             Self::Pen(draft) => draft.preview(),
             Self::Highlighter(draft) => draft.preview(),
             Self::Rectangle(draft) => draft.preview(),
+            Self::Circle(draft) => draft.preview(),
             Self::Arrow(draft) => draft.preview(),
             Self::Crop(draft) => OverlayObject::Crop(CropOverlay { rect: draft.rect() }),
         }
@@ -86,6 +93,7 @@ impl DraftOverlay {
             Self::Pen(draft) => draft.finish(),
             Self::Highlighter(draft) => draft.finish(),
             Self::Rectangle(draft) => draft.finish(),
+            Self::Circle(draft) => draft.finish(),
             Self::Arrow(draft) => draft.finish(),
             Self::Crop(draft) => Some(OverlayObject::Crop(CropOverlay { rect: draft.rect() })),
         }
@@ -100,6 +108,7 @@ pub fn begin_drag(tool: ToolKind, start: ImagePoint, style: StrokeStyle) -> Opti
             start, style,
         ))),
         ToolKind::Rectangle => Some(DraftOverlay::Rectangle(RectangleDraft::new(start, style))),
+        ToolKind::Circle => Some(DraftOverlay::Circle(CircleDraft::new(start, style))),
         ToolKind::Arrow => Some(DraftOverlay::Arrow(ArrowDraft::new(start, style))),
         ToolKind::Crop => Some(DraftOverlay::Crop(CropDraft::new(start))),
         ToolKind::Text => None,

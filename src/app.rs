@@ -160,6 +160,7 @@ impl SnaptureApp {
             ToolKind::Highlighter => self.current_highlighter_style(),
             ToolKind::Pen
             | ToolKind::Rectangle
+            | ToolKind::Circle
             | ToolKind::Arrow
             | ToolKind::Text
             | ToolKind::Crop => self.current_stroke_style(),
@@ -226,6 +227,9 @@ impl SnaptureApp {
                 "Highlighter active. Drag on the image to lay down translucent strokes; increase thickness for broader highlights."
             }
             ToolKind::Rectangle => "Rectangle active. Drag on the image to place a box.",
+            ToolKind::Circle => {
+                "Circle active. Drag from one edge of the circle to the opposite edge."
+            }
             ToolKind::Arrow => "Arrow active. Drag on the image to place an arrow.",
             ToolKind::Text => {
                 "Text active. Click the image to place a text anchor, type directly on the image, press Enter to apply, or press Shift+Enter for a new line."
@@ -522,6 +526,7 @@ impl SnaptureApp {
             ToolKind::Pen => self.handle_pen_output(&output, ctx),
             ToolKind::Highlighter => self.handle_highlighter_output(&output, ctx),
             ToolKind::Rectangle => self.handle_rectangle_output(&output, ctx),
+            ToolKind::Circle => self.handle_circle_output(&output, ctx),
             ToolKind::Arrow => self.handle_arrow_output(&output, ctx),
             ToolKind::Text => self.handle_text_output(&output, ctx),
             ToolKind::Crop => self.handle_crop_output(&output),
@@ -593,6 +598,15 @@ impl SnaptureApp {
             ctx,
             ToolKind::Rectangle,
             "Rectangle added. Drag again to place another box.",
+        );
+    }
+
+    fn handle_circle_output(&mut self, output: &canvas::CanvasOutput, ctx: &Context) {
+        self.handle_shape_output(
+            output,
+            ctx,
+            ToolKind::Circle,
+            "Circle added. Drag again to place another circle.",
         );
     }
 

@@ -13,6 +13,13 @@ pub struct RectangleOverlay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct CircleOverlay {
+    pub center: ImagePoint,
+    pub radius: f32,
+    pub style: StrokeStyle,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ArrowOverlay {
     pub start: ImagePoint,
     pub end: ImagePoint,
@@ -41,6 +48,7 @@ pub struct CropOverlay {
 pub enum OverlayObject {
     Pen(PenStrokeOverlay),
     Rectangle(RectangleOverlay),
+    Circle(CircleOverlay),
     Arrow(ArrowOverlay),
     Text(TextOverlay),
     Crop(CropOverlay),
@@ -51,6 +59,16 @@ impl OverlayObject {
         match self {
             Self::Pen(stroke) => bounds_from_points(&stroke.points, stroke.style.thickness),
             Self::Rectangle(rect) => rect.rect,
+            Self::Circle(circle) => ImageRect::from_points(
+                ImagePoint::new(
+                    circle.center.x - circle.radius,
+                    circle.center.y - circle.radius,
+                ),
+                ImagePoint::new(
+                    circle.center.x + circle.radius,
+                    circle.center.y + circle.radius,
+                ),
+            ),
             Self::Arrow(arrow) => {
                 bounds_from_points(&[arrow.start, arrow.end], arrow.style.thickness * 3.0)
             }
@@ -87,6 +105,11 @@ impl OverlayObject {
             Self::Rectangle(rectangle) => Self::Rectangle(RectangleOverlay {
                 rect: rectangle.rect.translated(dx, dy),
                 style: rectangle.style.clone(),
+            }),
+            Self::Circle(circle) => Self::Circle(CircleOverlay {
+                center: circle.center.translated(dx, dy),
+                radius: circle.radius,
+                style: circle.style.clone(),
             }),
             Self::Arrow(arrow) => Self::Arrow(ArrowOverlay {
                 start: arrow.start.translated(dx, dy),
@@ -130,6 +153,17 @@ impl OverlayObject {
                 style: StrokeStyle {
                     color: rectangle.style.color,
                     thickness: (rectangle.style.thickness * uniform_scale).max(1.0),
+                },
+            }),
+            Self::Circle(circle) => Self::Circle(CircleOverlay {
+                center: ImagePoint::new(
+                    to_bounds.min.x + to_bounds.width() * 0.5,
+                    to_bounds.min.y + to_bounds.height() * 0.5,
+                ),
+                radius: ((to_bounds.width() + to_bounds.height()) * 0.25).max(0.5),
+                style: StrokeStyle {
+                    color: circle.style.color,
+                    thickness: (circle.style.thickness * uniform_scale).max(1.0),
                 },
             }),
             Self::Arrow(arrow) => Self::Arrow(ArrowOverlay {

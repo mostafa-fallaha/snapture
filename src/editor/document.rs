@@ -14,7 +14,10 @@ use imageproc::{
 use crate::{
     error::{AppResult, SnaptureError},
     model::{
-        overlay::{ArrowOverlay, OverlayObject, PenStrokeOverlay, RectangleOverlay, TextOverlay},
+        overlay::{
+            ArrowOverlay, CircleOverlay, OverlayObject, PenStrokeOverlay, RectangleOverlay,
+            TextOverlay,
+        },
         types::{ImagePoint, ImageRect},
     },
 };
@@ -221,6 +224,7 @@ fn render_overlay(
     match overlay {
         OverlayObject::Pen(stroke) => render_pen(image, stroke, scale),
         OverlayObject::Rectangle(rectangle) => render_rectangle(image, rectangle, scale),
+        OverlayObject::Circle(circle) => render_circle(image, circle, scale),
         OverlayObject::Arrow(arrow) => render_arrow(image, arrow, scale),
         OverlayObject::Text(text) => render_text(image, text, font, scale)?,
         OverlayObject::Crop(_) => {}
@@ -257,6 +261,25 @@ fn render_rectangle(image: &mut RgbaImage, rectangle: &RectangleOverlay, scale: 
     draw_thick_segment(image, top_right, bottom_right, color, thickness);
     draw_thick_segment(image, bottom_right, bottom_left, color, thickness);
     draw_thick_segment(image, bottom_left, top_left, color, thickness);
+}
+
+fn render_circle(image: &mut RgbaImage, circle: &CircleOverlay, scale: f32) {
+    let center = scale_point(circle.center, scale);
+    let radius = circle.radius * scale;
+    let color = circle.style.color.to_image();
+    let thickness = circle.style.thickness * scale;
+    let segment_count = ((radius * 2.0 * PI).ceil() as usize).clamp(64, 720);
+    let mut points = Vec::with_capacity(segment_count + 1);
+
+    for index in 0..=segment_count {
+        let angle = index as f32 / segment_count as f32 * 2.0 * PI;
+        points.push(ImagePoint::new(
+            center.x + radius * angle.cos(),
+            center.y + radius * angle.sin(),
+        ));
+    }
+
+    render_polyline(image, &points, color, thickness);
 }
 
 fn render_arrow(image: &mut RgbaImage, arrow: &ArrowOverlay, scale: f32) {

@@ -643,6 +643,16 @@ fn paint_overlay(
                 egui::StrokeKind::Inside,
             );
         }
+        OverlayObject::Circle(circle) => {
+            painter.circle_stroke(
+                transform.image_to_screen(circle.center),
+                circle.radius * transform.scale,
+                Stroke::new(
+                    (circle.style.thickness * transform.scale).max(1.0),
+                    circle.style.color.to_egui(),
+                ),
+            );
+        }
         OverlayObject::Arrow(arrow) => {
             let start = transform.image_to_screen(arrow.start);
             let end = transform.image_to_screen(arrow.end);
